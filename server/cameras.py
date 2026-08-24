@@ -4,6 +4,7 @@ import platform
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import cv2
@@ -16,6 +17,11 @@ FLIP_MAP = {
     "v": 0,
     "hv": -1,
 }
+
+
+def _fourcc_int(code: str) -> int:
+    code = (code or "MJPG").ljust(4)[:4]
+    return cv2.VideoWriter_fourcc(*code)
 
 
 def _fourcc_str(value: int) -> str:
@@ -94,6 +100,8 @@ def discover_capture_indices(max_index: int = 10) -> list:
         return list(range(max_index))
     found = []
     for index in range(max_index):
+        if not Path(f"/dev/video{index}").exists():
+            continue
         cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
         if not cap.isOpened():
             continue
