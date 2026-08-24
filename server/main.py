@@ -105,10 +105,18 @@ async def ws_stream(ws: WebSocket) -> None:
                 last = packet
             else:
                 await asyncio.sleep(0.008)
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
         pass
     finally:
         engine.stats["clients"] = max(int(engine.stats.get("clients") or 1) - 1, 0)
+
+
+def _ignore_windows_disconnect(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+    """Browser refresh/close trips WinError 10054 inside the Proactor event loop."""
+    exc = context.get("exception")
+    if isinstance(exc, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+        return
+    loop.default_exception_handler(context)
 
 
 def run() -> None:
@@ -135,13 +143,24 @@ def run() -> None:
             print("  Quest: accept the certificate warning, then tap Enter VR.", flush=True)
 
             async def serve_both() -> None:
+                asyncio.get_running_loop().set_exception_handler(_ignore_windows_disconnect)
                 https_server = uvicorn.Server(https)
                 http_server = uvicorn.Server(http)
                 http_server.install_signal_handlers = False
-                await asyncio.gather(https_server.serve(), http_server.serve())
+                try:
+                    await asyncio.gather(https_server.serve(), http_server.serve())
+                except SystemExit as exc:
+                    raise RuntimeError(
+                        f"Could not bind HTTP {cfg['http_port']} / HTTPS {cfg['https_port']}. "
+                        "Another Stereo Vision process is probably still running."
+                    ) from exc
 
             asyncio.run(serve_both())
         else:
             uvicorn.run(app, host=host, port=int(cfg["http_port"]))
+    except OSError as exc:
+        raise SystemExit(
+            f"Port already in use ({exc}). Stop the other python -m server process and retry."
+        ) from exc
     finally:
         engine.stop()

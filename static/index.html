@@ -17,94 +17,43 @@
           <p>Dual-cam live feed · Meta Quest 3</p>
         </div>
       </div>
+
+      <div class="toolbar">
+        <button id="btn-vr" class="btn primary">Enter VR</button>
+        <button id="btn-record" class="btn danger">Start recording</button>
+        <button id="btn-swap" class="btn">Swap eyes</button>
+        <div class="recordings-menu">
+          <button id="btn-recordings" class="btn" type="button">Saved recordings ▾</button>
+          <div id="recordings-panel" class="recordings-panel" hidden>
+            <ul id="recording-list"></ul>
+          </div>
+        </div>
+      </div>
+
       <div class="status-pills">
         <span id="pill-link" class="pill">Connecting</span>
-        <span id="pill-sync" class="pill">Sync —</span>
         <span id="pill-rec" class="pill">Idle</span>
       </div>
     </header>
 
-    <section class="hero">
-      <div class="stage">
-        <div class="eye-card">
-          <div class="eye-meta"><span>LEFT</span><span id="left-cam-label">cam 0</span></div>
-          <canvas id="left-canvas"></canvas>
-        </div>
-        <div class="eye-card">
-          <div class="eye-meta"><span>RIGHT</span><span id="right-cam-label">cam 1</span></div>
-          <canvas id="right-canvas"></canvas>
-        </div>
-        <div id="overlay-msg" class="overlay-msg">Waiting for synced frames…</div>
+    <p class="hint" id="vr-hint">Quest 3: open this page over HTTPS, then tap Enter VR.</p>
+
+    <section class="stage">
+      <div class="eye-card">
+        <div class="eye-meta"><span>LEFT</span><span id="left-cam-label">cam 0</span></div>
+        <canvas id="left-canvas"></canvas>
       </div>
-
-      <aside class="panel">
-        <button id="btn-vr" class="btn primary xl">Enter VR</button>
-        <p class="hint" id="vr-hint">Quest 3: open this page over HTTPS, then tap Enter VR.</p>
-
-        <div class="btn-row">
-          <button id="btn-record" class="btn danger">Start recording</button>
-          <button id="btn-swap" class="btn">Swap eyes</button>
-        </div>
-        <label class="check">
-          <input type="checkbox" id="auto-record" />
-          Auto-save while streaming
-        </label>
-        <label class="check">
-          <input type="checkbox" id="mode-stereo" checked />
-          Stereo eye mapping (left → left eye)
-        </label>
-
-        <div class="stats">
-          <div><span>Preview</span><strong id="stat-fps">— fps</strong></div>
-          <div><span>Skew</span><strong id="stat-skew">— ms</strong></div>
-          <div><span>Record</span><strong id="stat-rec">off</strong></div>
-          <div><span>Clients</span><strong id="stat-clients">0</strong></div>
-        </div>
-
-        <div class="urls" id="url-box"></div>
-      </aside>
-    </section>
-
-    <section class="settings">
-      <h2>Cameras &amp; stream</h2>
-      <form id="settings-form">
-        <label>Left camera
-          <select name="left_index" id="left_index"></select>
-        </label>
-        <label>Right camera
-          <select name="right_index" id="right_index"></select>
-        </label>
-        <label>Width
-          <input name="width" type="number" min="320" max="1920" step="2" />
-        </label>
-        <label>Height
-          <input name="height" type="number" min="240" max="1080" step="2" />
-        </label>
-        <label>FPS
-          <input name="fps" type="number" min="5" max="60" />
-        </label>
-        <label>JPEG quality
-          <input name="jpeg_quality" type="number" min="40" max="95" />
-        </label>
-        <label>Stream max width
-          <input name="max_width" type="number" min="320" max="1920" />
-        </label>
-        <label>Max skew (ms)
-          <input name="max_skew_ms" type="number" min="10" max="100" />
-        </label>
-        <button type="submit" class="btn">Apply &amp; restart capture</button>
-      </form>
-    </section>
-
-    <section class="recordings">
-      <h2>Saved recordings</h2>
-      <p class="hint">Side-by-side stereo files are written to disk as they record (crash-safe fragments).</p>
-      <ul id="recording-list"></ul>
+      <div class="eye-card">
+        <div class="eye-meta"><span>RIGHT</span><span id="right-cam-label">cam 1</span></div>
+        <canvas id="right-canvas"></canvas>
+      </div>
+      <div id="overlay-msg" class="overlay-msg">Waiting for synced frames…</div>
     </section>
   </div>
 
   <div id="vr-root"></div>
 
+  <script src="/static/js/xr-shim.js"></script>
   <script src="/static/vendor/three.min.js"></script>
   <script src="/static/js/protocol.js"></script>
   <script src="/static/js/stream.js"></script>

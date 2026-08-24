@@ -22,8 +22,8 @@ DEFAULTS: dict[str, Any] = {
         "right_flip": "none",
     },
     "stream": {
-        "jpeg_quality": 75,
-        "max_width": 960,
+        "jpeg_quality": 85,
+        "max_width": 1920,
         "max_skew_ms": 40,
     },
     "server": {

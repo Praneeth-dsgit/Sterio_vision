@@ -6,19 +6,34 @@ function drawBitmap(canvas, bitmap) {
   ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
 }
 
+function paintPlaceholder(canvas, label) {
+  canvas.width = 960;
+  canvas.height = 540;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#151920";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#3de0ff";
+  ctx.font = "bold 72px sans-serif";
+  ctx.fillText(label, 80, 280);
+  ctx.fillStyle = "#9aa6c2";
+  ctx.font = "32px sans-serif";
+  ctx.fillText("Waiting for camera stream…", 80, 360);
+}
+
+function copyCanvas(dst, src) {
+  if (!dst || !src || src.width < 320) return false;
+  if (dst.width !== src.width) dst.width = src.width;
+  if (dst.height !== src.height) dst.height = src.height;
+  dst.getContext("2d").drawImage(src, 0, 0, dst.width, dst.height);
+  return true;
+}
+
 class StereoVR {
   constructor(stream) {
     this.stream = stream;
     this.stereoEyes = true;
     this.active = false;
     this.root = document.getElementById("vr-root");
-    this.leftTex = null;
-    this.rightTex = null;
-    this.leftMesh = null;
-    this.rightMesh = null;
-    this.dualLeft = null;
-    this.dualRight = null;
-    this.hud = null;
     this.recording = false;
     this.onToggleRecord = null;
   }
@@ -34,65 +49,91 @@ class StereoVR {
   }
 
   async enter() {
+    if (typeof ensureXRWebGLLayer === "function") ensureXRWebGLLayer();
     if (!window.THREE) throw new Error("Three.js failed to load");
     if (!navigator.xr) throw new Error("WebXR is not available in this browser");
     const ok = await navigator.xr.isSessionSupported("immersive-vr");
-    if (!ok) throw new Error("immersive-vr is not supported. Use HTTPS on Quest 3 Browser.");
+    if (!ok) throw new Error("immersive-vr is not supported. Use HTTPS on Quest 3 Browser, or enable Immersive Web Emulator for this site.");
 
     this.root.classList.add("active");
     this.active = true;
     const THREE = window.THREE;
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    const canvas = document.createElement("canvas");
+    canvas.style.display = "block";
+    const glAttrs = { antialias: true, alpha: false, xrCompatible: true, depth: true };
+    const gl =
+      canvas.getContext("webgl", glAttrs) || canvas.getContext("experimental-webgl", glAttrs);
+    this.renderer = new THREE.WebGLRenderer({
+      canvas: canvas,
+      context: gl,
+      antialias: true,
+      alpha: false,
+    });
+    this.renderer.setPixelRatio(1);
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.xr.enabled = true;
+    this.renderer.xr.setReferenceSpaceType("local");
     this.root.innerHTML = "";
     this.root.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x000000);
-    this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 100);
-    this.camera.position.set(0, 1.4, 0);
+    this.scene.background = new THREE.Color(0x10141c);
+    this.camera = new THREE.PerspectiveCamera(80, window.innerWidth / window.innerHeight, 0.02, 50);
+    this.scene.add(this.camera);
 
     this.leftCanvas = document.createElement("canvas");
     this.rightCanvas = document.createElement("canvas");
+    paintPlaceholder(this.leftCanvas, "LEFT");
+    paintPlaceholder(this.rightCanvas, "RIGHT");
+    copyCanvas(this.leftCanvas, document.getElementById("left-canvas"));
+    copyCanvas(this.rightCanvas, document.getElementById("right-canvas"));
+
     this.leftTex = new THREE.CanvasTexture(this.leftCanvas);
     this.rightTex = new THREE.CanvasTexture(this.rightCanvas);
-    try {
-      const space = THREE.SRGBColorSpace || THREE.sRGBEncoding;
-      this.leftTex.colorSpace = space;
-      this.rightTex.colorSpace = space;
-    } catch (err) {
-      /* older three.js builds */
-    }
+    this.leftTex.minFilter = THREE.LinearFilter;
+    this.rightTex.minFilter = THREE.LinearFilter;
+    this.leftTex.generateMipmaps = false;
+    this.rightTex.generateMipmaps = false;
 
-    const geo = new THREE.PlaneGeometry(2.4, 1.35);
-    const leftMat = new THREE.MeshBasicMaterial({ map: this.leftTex });
-    const rightMat = new THREE.MeshBasicMaterial({ map: this.rightTex });
+    const dist = 1.25;
+    const geo = new THREE.PlaneGeometry(3.2, 1.8);
+    const leftMat = new THREE.MeshBasicMaterial({ map: this.leftTex, depthTest: false, side: THREE.DoubleSide });
+    const rightMat = new THREE.MeshBasicMaterial({ map: this.rightTex, depthTest: false, side: THREE.DoubleSide });
+
+    this.rig = new THREE.Group();
+    this.scene.add(this.rig);
+
     this.leftMesh = new THREE.Mesh(geo, leftMat);
     this.rightMesh = new THREE.Mesh(geo.clone(), rightMat);
-    this.leftMesh.position.set(0, 1.4, -1.7);
-    this.rightMesh.position.set(0, 1.4, -1.7);
+    this.leftMesh.position.set(0, 0, -dist);
+    this.rightMesh.position.set(0, 0, -dist);
     this.leftMesh.layers.set(1);
     this.rightMesh.layers.set(2);
-    this.scene.add(this.leftMesh, this.rightMesh);
+    this.leftMesh.frustumCulled = false;
+    this.rightMesh.frustumCulled = false;
+    this.rig.add(this.leftMesh, this.rightMesh);
 
     this.dualLeft = new THREE.Mesh(geo.clone(), leftMat);
     this.dualRight = new THREE.Mesh(geo.clone(), rightMat);
-    this.dualLeft.position.set(-1.3, 1.4, -2.4);
-    this.dualRight.position.set(1.3, 1.4, -2.4);
+    this.dualLeft.position.set(-1.7, 0, -2.1);
+    this.dualRight.position.set(1.7, 0, -2.1);
     this.dualLeft.visible = false;
     this.dualRight.visible = false;
-    this.scene.add(this.dualLeft, this.dualRight);
+    this.dualLeft.frustumCulled = false;
+    this.dualRight.frustumCulled = false;
+    this.rig.add(this.dualLeft, this.dualRight);
 
     this.hudCanvas = document.createElement("canvas");
     this.hudCanvas.width = 1024;
     this.hudCanvas.height = 256;
     this.hudTex = new THREE.CanvasTexture(this.hudCanvas);
-    const hudMat = new THREE.MeshBasicMaterial({ map: this.hudTex, transparent: true });
-    this.hud = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.3), hudMat);
-    this.hud.position.set(0, 0.85, -1.35);
-    this.scene.add(this.hud);
+    this.hud = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.1, 0.28),
+      new THREE.MeshBasicMaterial({ map: this.hudTex, transparent: true, depthTest: false })
+    );
+    this.hud.position.set(0, -0.85, -1.15);
+    this.hud.frustumCulled = false;
+    this.rig.add(this.hud);
     this._paintHud();
 
     this.controller = this.renderer.xr.getController(0);
@@ -102,16 +143,8 @@ class StereoVR {
     this.scene.add(this.controller);
     this._applyMode();
 
-    try {
-      const session = await navigator.xr.requestSession("immersive-vr", {
-        optionalFeatures: ["local-floor", "bounded-floor", "hand-tracking"],
-      });
-      await this.renderer.xr.setSession(session);
-      session.addEventListener("end", () => this.exit());
-    } catch (err) {
-      this.exit();
-      throw err;
-    }
+    this._worldPos = new THREE.Vector3();
+    this._worldQuat = new THREE.Quaternion();
 
     this.unsub = this.stream.onFrame((frame) => {
       drawBitmap(this.leftCanvas, frame.left);
@@ -121,24 +154,53 @@ class StereoVR {
     });
 
     this.renderer.setAnimationLoop(() => {
-      const xrCam = this.renderer.xr.getCamera();
-      if (xrCam.cameras && xrCam.cameras.length >= 2) {
-        xrCam.cameras[0].layers.enable(1);
-        xrCam.cameras[1].layers.enable(2);
+      if (!this.renderer || !this.renderer.xr) return;
+      if (this.renderer.xr.isPresenting) {
+        try {
+          if (this.renderer.xr.updateCamera) this.renderer.xr.updateCamera(this.camera);
+          const xrCam = this.renderer.xr.getCamera();
+          if (xrCam && xrCam.getWorldPosition) {
+            xrCam.getWorldPosition(this._worldPos);
+            xrCam.getWorldQuaternion(this._worldQuat);
+            this.rig.position.copy(this._worldPos);
+            this.rig.quaternion.copy(this._worldQuat);
+            if (xrCam.cameras && xrCam.cameras.length >= 2) {
+              xrCam.cameras[0].layers.enable(1);
+              xrCam.cameras[1].layers.enable(2);
+            }
+          }
+        } catch (err) {
+          /* emulator can throw on the first XR frames */
+        }
       }
       this.renderer.render(this.scene, this.camera);
     });
+
+    try {
+      const session = await navigator.xr.requestSession("immersive-vr", {
+        optionalFeatures: ["local-floor"],
+      });
+      await this.renderer.xr.setSession(session);
+      session.addEventListener("end", () => this.exit());
+    } catch (err) {
+      this.exit();
+      throw err;
+    }
   }
 
   exit() {
     this.active = false;
     this.root.classList.remove("active");
-    if (this.unsub) this.unsub();
+    if (this.unsub) {
+      this.unsub();
+      this.unsub = null;
+    }
     if (this.renderer) {
       this.renderer.setAnimationLoop(null);
       const session = this.renderer.xr.getSession();
       if (session) session.end().catch(() => {});
       this.renderer.dispose();
+      this.renderer = null;
     }
     this.root.innerHTML = "";
   }
@@ -164,8 +226,8 @@ class StereoVR {
       ctx.fillRect(20, 20, 984, 216);
     }
     ctx.fillStyle = this.recording ? "#ff3b5c" : "#3de0ff";
-    ctx.font = "700 72px Segoe UI, sans-serif";
-    ctx.fillText(this.recording ? "RECORDING  ·  trigger to stop" : "Trigger: start recording", 60, 150);
+    ctx.font = "700 64px sans-serif";
+    ctx.fillText(this.recording ? "RECORDING  ·  trigger to stop" : "Trigger: start recording", 56, 150);
     if (this.hudTex) this.hudTex.needsUpdate = true;
   }
 }

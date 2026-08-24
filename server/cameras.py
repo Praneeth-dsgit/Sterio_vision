@@ -4,7 +4,6 @@ import platform
 import threading
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional
 
 import cv2
@@ -57,47 +56,31 @@ def test_pattern(width: int, height: int, label: str, hue: int, t: float) -> np.
 
 
 def open_capture(index: int, width: int, height: int, fps: int, fourcc: str) -> cv2.VideoCapture:
-    backend = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_V4L2
-    cap = cv2.VideoCapture(index, backend)
-    if not cap.isOpened() and backend != cv2.CAP_ANY:
-        cap = cv2.VideoCapture(index)
-    cap.set(cv2.CAP_PROP_FOURCC, _fourcc_int(fourcc))
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-    cap.set(cv2.CAP_PROP_FPS, fps)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    return cap
+    if platform.system() == "Windows":
+        backends = (cv2.CAP_DSHOW, cv2.CAP_MSMF)
+    else:
+        backends = (cv2.CAP_V4L2, cv2.CAP_ANY)
+
+    for backend in backends:
+        cap = cv2.VideoCapture(index, backend)
+        if not cap.isOpened():
+            continue
+        cap.set(cv2.CAP_PROP_FOURCC, _fourcc_int(fourcc))
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        cap.set(cv2.CAP_PROP_FPS, fps)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        ok, frame = cap.read()
+        if ok and frame is not None:
+            return cap
+        cap.release()
+    return cv2.VideoCapture()
 
 
 def list_cameras(max_index: int = 5) -> list:
-    found = []
-
-    def probe(index: int) -> bool:
-        cap = open_capture(index, 640, 480, 15, "MJPG")
-        ok = cap.isOpened()
-        cap.release()
-        return ok
-
-    for index in range(max_index):
-        holder = {"ok": False}
-
-        def run(i=index):
-            holder["ok"] = probe(i)
-
-        thread = threading.Thread(target=run, daemon=True)
-        thread.start()
-        thread.join(timeout=1.2)
-        if holder["ok"]:
-            found.append({"index": index, "name": f"Camera {index}"})
-    if platform.system() != "Windows":
-        for path in sorted(Path("/dev").glob("video*")):
-            try:
-                idx = int(path.name.replace("video", ""))
-            except ValueError:
-                continue
-            if not any(item["index"] == idx for item in found):
-                found.append({"index": idx, "name": str(path)})
-    return found
+    # Do not open devices here on Windows — MSMF/DSHOW probes steal the camera
+    # and then live capture fails with "can't grab frame".
+    return [{"index": i, "name": f"Camera {i}"} for i in range(max_index)]
 
 
 @dataclass
@@ -133,7 +116,7 @@ class CameraWorker(threading.Thread):
         self.synthetic_hue = synthetic_hue
         self._lock = threading.Lock()
         self._latest: Optional[Frame] = None
-        self._stop = threading.Event()
+        self._halt = threading.Event()
         self.opened = False
         self.synthetic = False
         self.frames = 0
@@ -144,7 +127,7 @@ class CameraWorker(threading.Thread):
             return self._latest
 
     def stop(self) -> None:
-        self._stop.set()
+        self._halt.set()
 
     def run(self) -> None:
         cap = open_capture(self.index, self.width, self.height, self.fps, self.fourcc)
@@ -153,7 +136,7 @@ class CameraWorker(threading.Thread):
         period = 1.0 / max(self.fps, 1)
         seq = 0
         try:
-            while not self._stop.is_set():
+            while not self._halt.is_set():
                 t0 = time.time()
                 if self.synthetic:
                     image = test_pattern(self.width, self.height, self.synthetic_label, self.synthetic_hue, t0)
@@ -162,8 +145,12 @@ class CameraWorker(threading.Thread):
                     ok, image = cap.read()
                     if not ok or image is None:
                         self.errors += 1
+                        if self.errors >= 20:
+                            self.synthetic = True
+                            cap.release()
                         time.sleep(0.02)
                         continue
+                    self.errors = 0
                     image = apply_flip(image, self.flip)
                     if image.shape[1] != self.width or image.shape[0] != self.height:
                         image = cv2.resize(image, (self.width, self.height), interpolation=cv2.INTER_AREA)
