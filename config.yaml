@@ -1,0 +1,37 @@
+# Stereo Vision — dual USB camera → Meta Quest 3
+# Edit this file or change settings from the web UI.
+
+cameras:
+  left_index: 0
+  right_index: 1
+  width: 1280
+  height: 720
+  fps: 30
+  # MJPG is required on USB to run two cameras without bandwidth collapse
+  fourcc: MJPG
+  # Flip if a camera is mounted upside down
+  left_flip: none    # none | h | v | hv
+  right_flip: none
+
+stream:
+  jpeg_quality: 75
+  # Downscale for the live VR feed only. Recording still uses capture resolution.
+  max_width: 960
+  # Drop a pair if left/right timestamps differ by more than this
+  max_skew_ms: 40
+
+server:
+  host: 0.0.0.0
+  http_port: 8080
+  https_port: 8443
+  # WebXR on Quest 3 requires HTTPS
+  https: true
+
+record:
+  # Start writing to disk as soon as cameras are live
+  auto_start: true
+  directory: recordings
+  # New file every N minutes (0 = one file until Stop)
+  segment_minutes: 5
+  # Crash-safe fragmented MP4 of the side-by-side stereo pair
+  stereo_layout: sbs   # sbs | tb

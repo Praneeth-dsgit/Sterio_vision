@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+recordings/
+certs/*.pem
+certs/*.key
+certs/*.crt
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+config.local.yaml

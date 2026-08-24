@@ -1,0 +1,14 @@
+[Unit]
+Description=Stereo Vision dual-camera Quest 3 streamer
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/nvidia/Sterio_vision
+ExecStart=/usr/bin/python3 -m server
+Restart=on-failure
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
