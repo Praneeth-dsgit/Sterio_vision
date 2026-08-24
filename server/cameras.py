@@ -18,9 +18,117 @@ FLIP_MAP = {
 }
 
 
-def _fourcc_int(code: str) -> int:
-    code = (code or "MJPG").ljust(4)[:4]
-    return cv2.VideoWriter_fourcc(*code)
+def _fourcc_str(value: int) -> str:
+    try:
+        return "".join(chr((int(value) >> (8 * i)) & 0xFF) for i in range(4))
+    except Exception:
+        return "????"
+
+
+def looks_like_video(frame) -> bool:
+    if frame is None or getattr(frame, "size", 0) < 160 * 120 * 3:
+        return False
+    h, w = frame.shape[:2]
+    return w >= 160 and h >= 120 and frame.ndim == 3
+
+
+def fit_frame(image: np.ndarray, width: int, height: int) -> np.ndarray:
+    """Scale with aspect ratio preserved (letterbox), never squash."""
+    ih, iw = image.shape[:2]
+    if iw == width and ih == height:
+        return image
+    scale = min(width / float(iw), height / float(ih))
+    nw = max(1, int(round(iw * scale)))
+    nh = max(1, int(round(ih * scale)))
+    interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    resized = cv2.resize(image, (nw, nh), interpolation=interp)
+    canvas = np.zeros((height, width, 3), dtype=np.uint8)
+    x = (width - nw) // 2
+    y = (height - nh) // 2
+    canvas[y : y + nh, x : x + nw] = resized
+    return canvas
+
+
+def open_capture(index: int, width: int, height: int, fps: int, fourcc: str) -> cv2.VideoCapture:
+    if platform.system() == "Windows":
+        backends = (cv2.CAP_DSHOW, cv2.CAP_MSMF)
+    else:
+        backends = (cv2.CAP_V4L2, cv2.CAP_ANY)
+
+    sizes = []
+    for pair in ((width, height), (1280, 720), (960, 540), (800, 600), (640, 480)):
+        if pair not in sizes:
+            sizes.append(pair)
+    codecs = []
+    for code in (fourcc, "MJPG", "YUY2", "YUYV"):
+        if code and code not in codecs:
+            codecs.append(code)
+
+    for backend in backends:
+        for code in codecs:
+            for w, h in sizes:
+                cap = cv2.VideoCapture(index, backend)
+                if not cap.isOpened():
+                    break
+                cap.set(cv2.CAP_PROP_FOURCC, _fourcc_int(code))
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
+                cap.set(cv2.CAP_PROP_FPS, fps)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                ok, frame = cap.read()
+                if ok and looks_like_video(frame):
+                    got_w, got_h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    got_cc = _fourcc_str(cap.get(cv2.CAP_PROP_FOURCC))
+                    print(
+                        f"[cam {index}] {got_w}x{got_h} @ {code}/{got_cc} (requested {w}x{h} {code})",
+                        flush=True,
+                    )
+                    return cap
+                cap.release()
+    return cv2.VideoCapture()
+
+
+def discover_capture_indices(max_index: int = 10) -> list:
+    """Linux: skip V4L metadata nodes; keep devices that actually return a video frame."""
+    if platform.system() == "Windows":
+        return list(range(max_index))
+    found = []
+    for index in range(max_index):
+        cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
+        if not cap.isOpened():
+            continue
+        cap.set(cv2.CAP_PROP_FOURCC, _fourcc_int("MJPG"))
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        ok, frame = cap.read()
+        cap.release()
+        if ok and looks_like_video(frame):
+            found.append(index)
+    return found
+
+
+def resolve_camera_indices(left: int, right: int) -> tuple:
+    if platform.system() == "Windows":
+        return int(left), int(right)
+    good = discover_capture_indices()
+    left, right = int(left), int(right)
+    if left in good and right in good and left != right:
+        return left, right
+    if len(good) >= 2:
+        print(
+            f"Camera indices {left}/{right} are not both capture nodes. "
+            f"Using {good[0]} (left) and {good[1]} (right). "
+            "Check with: v4l2-ctl --list-devices",
+            flush=True,
+        )
+        return good[0], good[1]
+    return left, right
+
+
+def list_cameras(max_index: int = 5) -> list:
+    if platform.system() != "Windows":
+        return [{"index": i, "name": f"/dev/video{i}"} for i in discover_capture_indices(max_index + 4)]
+    return [{"index": i, "name": f"Camera {i}"} for i in range(max_index)]
 
 
 def apply_flip(frame: np.ndarray, mode: str) -> np.ndarray:
@@ -152,8 +260,7 @@ class CameraWorker(threading.Thread):
                         continue
                     self.errors = 0
                     image = apply_flip(image, self.flip)
-                    if image.shape[1] != self.width or image.shape[0] != self.height:
-                        image = cv2.resize(image, (self.width, self.height), interpolation=cv2.INTER_AREA)
+                    image = fit_frame(image, self.width, self.height)
                 frame = Frame(image=image, timestamp=t0, index=seq, synthetic=self.synthetic)
                 with self._lock:
                     self._latest = frame

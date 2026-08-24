@@ -55,9 +55,21 @@ EOF
   exit 1
 fi
 
-echo "==> Installing Python packages (do NOT pip-install opencv-python on Jetson)"
+echo "==> Installing Python packages"
 $PY -m pip install --user --upgrade pip
 $PY -m pip install --user -r "$ROOT/requirements.jetson.txt"
+
+if ! $PY -c "import cv2" 2>/dev/null; then
+  echo "==> cv2 missing; installing opencv-python-headless"
+  $PY -m pip install --user opencv-python-headless
+fi
+
+if ! $PY -c "import cv2; print('OpenCV', cv2.__version__)"; then
+  echo "ERROR: Python still cannot import cv2."
+  echo "  which python: $(command -v $PY)"
+  echo "  Try:  $PY -m pip install opencv-python-headless"
+  exit 1
+fi
 
 echo
 echo "Setup finished."

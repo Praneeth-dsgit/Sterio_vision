@@ -95,8 +95,8 @@ class StereoVR {
     this.leftTex.generateMipmaps = false;
     this.rightTex.generateMipmaps = false;
 
-    const dist = 1.25;
-    const geo = new THREE.PlaneGeometry(3.2, 1.8);
+    const dist = 2.0;
+    const geo = new THREE.PlaneGeometry(2.3, 1.3);
     const leftMat = new THREE.MeshBasicMaterial({ map: this.leftTex, depthTest: false, side: THREE.DoubleSide });
     const rightMat = new THREE.MeshBasicMaterial({ map: this.rightTex, depthTest: false, side: THREE.DoubleSide });
 
@@ -115,8 +115,8 @@ class StereoVR {
 
     this.dualLeft = new THREE.Mesh(geo.clone(), leftMat);
     this.dualRight = new THREE.Mesh(geo.clone(), rightMat);
-    this.dualLeft.position.set(-1.7, 0, -2.1);
-    this.dualRight.position.set(1.7, 0, -2.1);
+    this.dualLeft.position.set(-1.25, 0, -2.4);
+    this.dualRight.position.set(1.25, 0, -2.4);
     this.dualLeft.visible = false;
     this.dualRight.visible = false;
     this.dualLeft.frustumCulled = false;
@@ -131,7 +131,7 @@ class StereoVR {
       new THREE.PlaneGeometry(1.1, 0.28),
       new THREE.MeshBasicMaterial({ map: this.hudTex, transparent: true, depthTest: false })
     );
-    this.hud.position.set(0, -0.85, -1.15);
+    this.hud.position.set(0, -0.72, -1.7);
     this.hud.frustumCulled = false;
     this.rig.add(this.hud);
     this._paintHud();

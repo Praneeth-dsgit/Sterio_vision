@@ -8,7 +8,7 @@ from typing import Optional
 import cv2
 import numpy as np
 
-from .cameras import CameraWorker, Frame, list_cameras
+from .cameras import CameraWorker, Frame, list_cameras, resolve_camera_indices
 from .config import load_config, save_local_config
 from .recorder import StereoRecorder, stack_stereo
 from .sync import pair_frames
@@ -77,10 +77,13 @@ class StereoEngine:
         self.stop()
         self.cfg = load_config()
         cam = self.cfg["cameras"]
+        left_idx, right_idx = resolve_camera_indices(cam["left_index"], cam["right_index"])
+        self.cfg["cameras"]["left_index"] = left_idx
+        self.cfg["cameras"]["right_index"] = right_idx
         self._available_cameras = list_cameras()
         self.left = CameraWorker(
             "left",
-            int(cam["left_index"]),
+            left_idx,
             int(cam["width"]),
             int(cam["height"]),
             int(cam["fps"]),
@@ -91,7 +94,7 @@ class StereoEngine:
         )
         self.right = CameraWorker(
             "right",
-            int(cam["right_index"]),
+            right_idx,
             int(cam["width"]),
             int(cam["height"]),
             int(cam["fps"]),
