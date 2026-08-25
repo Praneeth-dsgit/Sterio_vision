@@ -115,8 +115,11 @@ class StereoVR {
     const leftMat = new THREE.MeshBasicMaterial({ map: this.leftTex, depthTest: false, side: THREE.DoubleSide });
     const rightMat = new THREE.MeshBasicMaterial({ map: this.rightTex, depthTest: false, side: THREE.DoubleSide });
 
+    this.rig = new THREE.Group();
+    this.scene.add(this.rig);
     this.screen = new THREE.Group();
-    this.scene.add(this.screen);
+    this.screen.position.set(0, this._dropY, -this._dist);
+    this.rig.add(this.screen);
 
     this.leftMesh = new THREE.Mesh(geo, leftMat);
     this.rightMesh = new THREE.Mesh(geo.clone(), rightMat);
@@ -152,7 +155,6 @@ class StereoVR {
     this._up = new THREE.Vector3();
     this._forward = new THREE.Vector3();
     this._grabOffset = new THREE.Vector3();
-    this._placed = false;
     this._grabbing = false;
     this._grabCtrl = null;
 
@@ -196,7 +198,11 @@ class StereoVR {
           if (this.renderer.xr.updateCamera) this.renderer.xr.updateCamera(this.camera);
           const xrCam = this.renderer.xr.getCamera();
           if (xrCam && xrCam.getWorldPosition) {
-            if (!this._placed) this._placeInFront(xrCam);
+            xrCam.getWorldPosition(this._worldPos);
+            xrCam.getWorldQuaternion(this._worldQuat);
+            this.rig.position.copy(this._worldPos);
+            this.rig.quaternion.copy(this._worldQuat);
+            this.rig.updateMatrixWorld(true);
             if (xrCam.cameras && xrCam.cameras.length >= 2) {
               xrCam.cameras[0].layers.enable(1);
               xrCam.cameras[1].layers.enable(2);
@@ -279,27 +285,18 @@ class StereoVR {
     this._paintHud();
   }
 
-  _placeInFront(cam) {
-    if (!this.screen || !cam) return;
-    if (cam.getWorldPosition) {
-      cam.getWorldPosition(this._worldPos);
-      cam.getWorldQuaternion(this._worldQuat);
-    } else {
-      this.camera.getWorldPosition(this._worldPos);
-      this.camera.getWorldQuaternion(this._worldQuat);
-    }
-    this._forward.set(0, 0, -1).applyQuaternion(this._worldQuat);
-    this.screen.position.copy(this._worldPos).addScaledVector(this._forward, this._dist);
-    this.screen.position.y += this._dropY;
-    this.screen.quaternion.copy(this._worldQuat);
-    this._placed = true;
+  _placeInFront() {
+    if (!this.screen) return;
+    this.screen.position.set(0, this._dropY, -this._dist);
+    this.screen.quaternion.identity();
   }
 
   _beginGrab(ctrl) {
-    if (!this.screen || !ctrl) return;
+    if (!this.screen || !this.rig || !ctrl) return;
     this._grabbing = true;
     this._grabCtrl = ctrl;
     ctrl.getWorldPosition(this._tmp);
+    this.rig.worldToLocal(this._tmp);
     this._grabOffset.copy(this.screen.position).sub(this._tmp);
   }
 
@@ -311,26 +308,37 @@ class StereoVR {
   }
 
   _updateGrab() {
-    if (!this._grabbing || !this._grabCtrl || !this.screen) return;
+    if (!this._grabbing || !this._grabCtrl || !this.screen || !this.rig) return;
     this._grabCtrl.getWorldPosition(this._tmp);
+    this.rig.worldToLocal(this._tmp);
     this.screen.position.copy(this._tmp).add(this._grabOffset);
   }
 
   _nudgeScreen(dx, dy, dz) {
     if (!this.screen) return;
-    this.camera.getWorldQuaternion(this._worldQuat);
-    this._right.set(1, 0, 0).applyQuaternion(this._worldQuat);
-    this._up.set(0, 1, 0).applyQuaternion(this._worldQuat);
-    this._forward.set(0, 0, -1).applyQuaternion(this._worldQuat);
-    this.screen.position.addScaledVector(this._right, dx);
-    this.screen.position.addScaledVector(this._up, dy);
-    this.screen.position.addScaledVector(this._forward, dz);
+    this.screen.position.x += dx;
+    this.screen.position.y += dy;
+    this.screen.position.z -= dz;
   }
 
   _bindOverlayControls() {
+    const back = document.createElement("button");
+    back.type = "button";
+    back.className = "vr-back";
+    back.setAttribute("data-exit", "1");
+    back.textContent = "← Back";
+    back.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.exit();
+    });
+    this.root.appendChild(back);
+    this._backBtn = back;
+
     const bar = document.createElement("div");
     bar.className = "vr-zoom-bar";
     bar.innerHTML =
+      '<button type="button" data-exit="1" class="vr-zoom-reset">Back</button>' +
       '<button type="button" data-zoom="out" aria-label="Zoom out">−</button>' +
       '<span class="vr-zoom-label">100%</span>' +
       '<button type="button" data-zoom="in" aria-label="Zoom in">+</button>' +
@@ -347,13 +355,16 @@ class StereoVR {
       this._zoomHold = setInterval(() => step(factor), 90);
     };
     bar.addEventListener("pointerdown", (event) => {
-      const btn = event.target.closest("[data-zoom], [data-place]");
+      const btn = event.target.closest("[data-zoom], [data-place], [data-exit]");
       if (!btn) return;
       event.preventDefault();
       event.stopPropagation();
+      if (btn.getAttribute("data-exit")) {
+        this.exit();
+        return;
+      }
       if (btn.getAttribute("data-place") === "reset") {
-        const xrCam = this.renderer && this.renderer.xr && this.renderer.xr.getCamera();
-        this._placeInFront(xrCam || this.camera);
+        this._placeInFront();
         return;
       }
       const action = btn.getAttribute("data-zoom");
@@ -366,7 +377,7 @@ class StereoVR {
     bar.addEventListener("pointercancel", stopHold);
 
     this._onWheel = (event) => {
-      if (event.target.closest(".vr-zoom-bar")) return;
+      if (event.target.closest(".vr-zoom-bar, .vr-back")) return;
       event.preventDefault();
       if (event.shiftKey) {
         this._nudgeScreen(0, 0, event.deltaY > 0 ? -0.12 : 0.12);
@@ -376,7 +387,10 @@ class StereoVR {
     };
     this._onKey = (event) => {
       if (!this.active) return;
-      if (event.key === "+" || event.key === "=") {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this.exit();
+      } else if (event.key === "+" || event.key === "=") {
         event.preventDefault();
         this.setZoom(this.zoom * 1.1);
       } else if (event.key === "-" || event.key === "_") {
@@ -387,8 +401,7 @@ class StereoVR {
         this.setZoom(1);
       } else if (event.key === "Home") {
         event.preventDefault();
-        const xrCam = this.renderer && this.renderer.xr && this.renderer.xr.getCamera();
-        this._placeInFront(xrCam || this.camera);
+        this._placeInFront();
       } else if (event.key === "ArrowLeft") {
         event.preventDefault();
         this._nudgeScreen(event.shiftKey ? 0 : -0.08, 0, event.shiftKey ? -0.08 : 0);
@@ -405,7 +418,7 @@ class StereoVR {
     };
     this._onPtrDown = (event) => {
       if (event.button !== 0) return;
-      if (event.target.closest(".vr-zoom-bar")) return;
+      if (event.target.closest(".vr-zoom-bar, .vr-back")) return;
       this._mouseDrag = true;
       this._ptrShift = event.shiftKey;
       try {
@@ -458,6 +471,7 @@ class StereoVR {
     this._onKey = null;
     this._zoomBar = null;
     this._zoomLabel = null;
+    this._backBtn = null;
   }
 
   _pollZoom(time, xrFrame) {
@@ -501,7 +515,7 @@ class StereoVR {
     }
     ctx.fillStyle = this.recording ? "#ff3b5c" : "#3de0ff";
     ctx.font = "700 42px sans-serif";
-    ctx.fillText(this.recording ? "RECORDING  ·  trigger to stop" : "Grip: drag screen   ·   trigger: record", 48, 110);
+    ctx.fillText(this.recording ? "RECORDING  ·  trigger to stop" : "Follows head  ·  grip offsets  ·  trigger: record", 40, 110);
     ctx.fillStyle = "#c5d0e8";
     ctx.font = "600 40px sans-serif";
     ctx.fillText(`Zoom ${Math.round((this.zoom || 1) * 100)}%  ·  stick / drag / arrows`, 56, 180);
