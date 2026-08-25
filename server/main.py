@@ -12,15 +12,26 @@ from .certs import ensure_certs, public_urls
 from .config import ROOT, load_config, recordings_dir
 from .engine import StereoEngine
 
+class NoStoreStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        return response
+
+
 STATIC = ROOT / "static"
 engine = StereoEngine()
 app = FastAPI(title="Stereo Vision", version="1.0.0")
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
+app.mount("/static", NoStoreStaticFiles(directory=STATIC), name="static")
 
 
 @app.get("/")
 async def index() -> FileResponse:
-    return FileResponse(STATIC / "index.html")
+    return FileResponse(
+        STATIC / "index.html",
+        headers={"Cache-Control": "no-store, max-age=0", "Pragma": "no-cache"},
+    )
 
 
 @app.get("/api/status")
