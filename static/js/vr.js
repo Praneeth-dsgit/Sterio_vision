@@ -61,6 +61,8 @@ function makeBackMesh(THREE) {
   mesh.name = "vr-back-3d";
   return mesh;
 }
+
+class StereoVR {
   constructor(stream) {
     this.stream = stream;
     this.stereoEyes = true;
