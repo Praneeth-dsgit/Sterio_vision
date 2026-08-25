@@ -156,14 +156,20 @@ h1 { margin: 0; font-size: 20px; }
   pointer-events: none;
 }
 
-#vr-root { position: fixed; inset: 0; display: none; z-index: 20; background: #000; }
+#vr-root { position: fixed; inset: 0; display: none; z-index: 20; background: #000; isolation: isolate; }
 #vr-root.active { display: block; }
-#vr-root canvas { width: 100%; height: 100%; }
+#vr-root canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+}
 .vr-back {
   position: absolute;
   top: 16px;
   left: 16px;
-  z-index: 3;
+  z-index: 30;
   appearance: none;
   min-width: 132px;
   min-height: 52px;
@@ -183,7 +189,7 @@ h1 { margin: 0; font-size: 20px; }
   left: 50%;
   bottom: 28px;
   transform: translateX(-50%);
-  z-index: 2;
+  z-index: 30;
   display: flex;
   align-items: center;
   gap: 10px;

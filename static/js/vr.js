@@ -31,7 +31,36 @@ function copyCanvas(dst, src) {
   return true;
 }
 
-class StereoVR {
+function makeBackMesh(THREE) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 192;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "rgba(8,12,20,0.92)";
+  if (typeof ctx.roundRect === "function") {
+    ctx.roundRect(16, 16, 480, 160, 36);
+    ctx.fill();
+  } else {
+    ctx.fillRect(16, 16, 480, 160);
+  }
+  ctx.fillStyle = "#3de0ff";
+  ctx.font = "700 92px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("←  BACK", 256, 100);
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.48, 0.18),
+    new THREE.MeshBasicMaterial({
+      map: new THREE.CanvasTexture(canvas),
+      transparent: true,
+      depthTest: false,
+    })
+  );
+  mesh.position.set(-0.52, 0.4, -1.35);
+  mesh.frustumCulled = false;
+  mesh.name = "vr-back-3d";
+  return mesh;
+}
   constructor(stream) {
     this.stream = stream;
     this.stereoEyes = true;
@@ -84,6 +113,9 @@ class StereoVR {
     });
     this.renderer.setPixelRatio(1);
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.domElement.style.position = "absolute";
+    this.renderer.domElement.style.inset = "0";
+    this.renderer.domElement.style.zIndex = "0";
     this.renderer.xr.enabled = true;
     this.renderer.xr.setReferenceSpaceType("local");
     this.root.innerHTML = "";
@@ -92,6 +124,8 @@ class StereoVR {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x10141c);
     this.camera = new THREE.PerspectiveCamera(80, window.innerWidth / window.innerHeight, 0.02, 50);
+    this.camera.layers.enable(1);
+    this.camera.layers.enable(2);
     this.scene.add(this.camera);
 
     this.leftCanvas = document.createElement("canvas");
@@ -115,11 +149,9 @@ class StereoVR {
     const leftMat = new THREE.MeshBasicMaterial({ map: this.leftTex, depthTest: false, side: THREE.DoubleSide });
     const rightMat = new THREE.MeshBasicMaterial({ map: this.rightTex, depthTest: false, side: THREE.DoubleSide });
 
-    this.rig = new THREE.Group();
-    this.scene.add(this.rig);
     this.screen = new THREE.Group();
     this.screen.position.set(0, this._dropY, -this._dist);
-    this.rig.add(this.screen);
+    this.camera.add(this.screen);
 
     this.leftMesh = new THREE.Mesh(geo, leftMat);
     this.rightMesh = new THREE.Mesh(geo.clone(), rightMat);
@@ -148,6 +180,10 @@ class StereoVR {
     this.hud.frustumCulled = false;
     this.screen.add(this.hud);
 
+    this.backMesh = makeBackMesh(THREE);
+    this.camera.add(this.backMesh);
+    this._raycaster = new THREE.Raycaster();
+
     this._worldPos = new THREE.Vector3();
     this._worldQuat = new THREE.Quaternion();
     this._tmp = new THREE.Vector3();
@@ -161,19 +197,12 @@ class StereoVR {
     this._bindOverlayControls();
     this.setZoom(this.zoom);
 
-    this.camera.layers.enable(1);
-    this.camera.layers.enable(2);
     this._controllers = [];
     for (let i = 0; i < 2; i++) {
       const ctrl = this.renderer.xr.getController(i);
       ctrl.addEventListener("squeezestart", () => this._beginGrab(ctrl));
       ctrl.addEventListener("squeezeend", () => this._endGrab(ctrl));
-      if (i === 0) {
-        ctrl.addEventListener("select", () => {
-          if (this._grabbing) return;
-          if (this.onToggleRecord) this.onToggleRecord();
-        });
-      }
+      ctrl.addEventListener("select", () => this._onSelect(ctrl));
       this.scene.add(ctrl);
       this._controllers.push(ctrl);
     }
@@ -197,17 +226,13 @@ class StereoVR {
           this._pollZoom(time, xrFrame);
           if (this.renderer.xr.updateCamera) this.renderer.xr.updateCamera(this.camera);
           const xrCam = this.renderer.xr.getCamera();
-          if (xrCam && xrCam.getWorldPosition) {
-            xrCam.getWorldPosition(this._worldPos);
-            xrCam.getWorldQuaternion(this._worldQuat);
-            this.rig.position.copy(this._worldPos);
-            this.rig.quaternion.copy(this._worldQuat);
-            this.rig.updateMatrixWorld(true);
-            if (xrCam.cameras && xrCam.cameras.length >= 2) {
-              xrCam.cameras[0].layers.enable(1);
-              xrCam.cameras[1].layers.enable(2);
-            }
+          this._attachHeadLocked(xrCam || this.camera);
+          if (xrCam && xrCam.cameras && xrCam.cameras.length >= 2) {
+            xrCam.cameras[0].layers.enable(1);
+            xrCam.cameras[1].layers.enable(2);
           }
+          if (xrCam && xrCam.updateMatrixWorld) xrCam.updateMatrixWorld(true);
+          else this.camera.updateMatrixWorld(true);
           this._updateGrab();
         } catch (err) {
           /* emulator can throw on the first XR frames */
@@ -291,12 +316,46 @@ class StereoVR {
     this.screen.quaternion.identity();
   }
 
+  _attachHeadLocked(head) {
+    if (!head || !this.screen) return;
+    if (this.screen.parent !== head) head.add(this.screen);
+    if (this.backMesh && this.backMesh.parent !== head) head.add(this.backMesh);
+  }
+
+  _headSpace() {
+    return (this.screen && this.screen.parent) || this.camera;
+  }
+
+  _onSelect(ctrl) {
+    if (this._grabbing) return;
+    if (this.backMesh && this._raycaster) {
+      try {
+        if (this._raycaster.setFromXRController) this._raycaster.setFromXRController(ctrl);
+        else {
+          ctrl.getWorldPosition(this._tmp);
+          this._forward.set(0, 0, -1).applyQuaternion(ctrl.quaternion);
+          this._raycaster.set(this._tmp, this._forward);
+        }
+        const hits = this._raycaster.intersectObject(this.backMesh, false);
+        if (hits.length) {
+          this.exit();
+          return;
+        }
+      } catch (err) {
+        /* ignore raycast errors in emulator */
+      }
+    }
+    if (this.onToggleRecord) this.onToggleRecord();
+  }
+
   _beginGrab(ctrl) {
-    if (!this.screen || !this.rig || !ctrl) return;
+    if (!this.screen || !ctrl) return;
     this._grabbing = true;
     this._grabCtrl = ctrl;
+    const head = this._headSpace();
+    head.updateMatrixWorld(true);
     ctrl.getWorldPosition(this._tmp);
-    this.rig.worldToLocal(this._tmp);
+    head.worldToLocal(this._tmp);
     this._grabOffset.copy(this.screen.position).sub(this._tmp);
   }
 
@@ -308,9 +367,11 @@ class StereoVR {
   }
 
   _updateGrab() {
-    if (!this._grabbing || !this._grabCtrl || !this.screen || !this.rig) return;
+    if (!this._grabbing || !this._grabCtrl || !this.screen) return;
+    const head = this._headSpace();
+    head.updateMatrixWorld(true);
     this._grabCtrl.getWorldPosition(this._tmp);
-    this.rig.worldToLocal(this._tmp);
+    head.worldToLocal(this._tmp);
     this.screen.position.copy(this._tmp).add(this._grabOffset);
   }
 
@@ -515,7 +576,7 @@ class StereoVR {
     }
     ctx.fillStyle = this.recording ? "#ff3b5c" : "#3de0ff";
     ctx.font = "700 42px sans-serif";
-    ctx.fillText(this.recording ? "RECORDING  ·  trigger to stop" : "Follows head  ·  grip offsets  ·  trigger: record", 40, 110);
+    ctx.fillText(this.recording ? "RECORDING  ·  trigger to stop" : "Aim at BACK  ·  trigger: record", 48, 110);
     ctx.fillStyle = "#c5d0e8";
     ctx.font = "600 40px sans-serif";
     ctx.fillText(`Zoom ${Math.round((this.zoom || 1) * 100)}%  ·  stick / drag / arrows`, 56, 180);
