@@ -54,12 +54,41 @@ function makeBackMesh(THREE) {
       map: new THREE.CanvasTexture(canvas),
       transparent: true,
       depthTest: false,
+      toneMapped: false,
     })
   );
-  mesh.position.set(-0.52, 0.4, -1.35);
   mesh.frustumCulled = false;
+  mesh.renderOrder = 3;
   mesh.name = "vr-back-3d";
   return mesh;
+}
+
+function makeControllerPointer(THREE) {
+  const group = new THREE.Group();
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.0035, 0.0035, 1, 8),
+    new THREE.MeshBasicMaterial({
+      color: 0x88f0ff,
+      transparent: true,
+      opacity: 0.9,
+      depthTest: false,
+      toneMapped: false,
+    })
+  );
+  beam.rotation.x = Math.PI / 2;
+  beam.frustumCulled = false;
+  beam.renderOrder = 20;
+  const dot = new THREE.Mesh(
+    new THREE.SphereGeometry(0.016, 16, 16),
+    new THREE.MeshBasicMaterial({ color: 0x3de0ff, depthTest: false, toneMapped: false })
+  );
+  dot.frustumCulled = false;
+  dot.renderOrder = 21;
+  group.add(beam);
+  group.add(dot);
+  group.userData.beam = beam;
+  group.userData.dot = dot;
+  return group;
 }
 
 class StereoVR {
@@ -180,10 +209,11 @@ class StereoVR {
       new THREE.MeshBasicMaterial({ map: this.hudTex, transparent: true, depthTest: false })
     );
     this.hud.frustumCulled = false;
+    this.hud.renderOrder = 2;
     this.screen.add(this.hud);
 
     this.backMesh = makeBackMesh(THREE);
-    this.rig.add(this.backMesh);
+    this.screen.add(this.backMesh);
     this._raycaster = new THREE.Raycaster();
 
     this._worldPos = new THREE.Vector3();
@@ -202,6 +232,9 @@ class StereoVR {
     this._controllers = [];
     for (let i = 0; i < 2; i++) {
       const ctrl = this.renderer.xr.getController(i);
+      const pointer = makeControllerPointer(THREE);
+      ctrl.add(pointer);
+      ctrl.userData.pointer = pointer;
       ctrl.addEventListener("squeezestart", () => this._beginGrab(ctrl));
       ctrl.addEventListener("squeezeend", () => this._endGrab(ctrl));
       ctrl.addEventListener("select", () => this._onSelect(ctrl));
@@ -228,6 +261,7 @@ class StereoVR {
           this._pollZoom(time, xrFrame);
           this._syncHeadPose();
           this._updateGrab();
+          this._updatePointers();
         } catch (err) {
           console.warn("xr frame", err);
         }
@@ -299,7 +333,15 @@ class StereoVR {
     const h = this._planeH * s;
     this.dualLeft.position.set(-(w / 2 + 0.25), 0, -0.05);
     this.dualRight.position.set(w / 2 + 0.25, 0, -0.05);
-    this.hud.position.set(0, -(h / 2 + 0.22), 0.04);
+    const hudW = 1.1;
+    const hudH = 0.28;
+    const hudY = -(h / 2 + 0.22);
+    this.hud.position.set(0, hudY, 0.04);
+    if (this.backMesh) {
+      const backW = 0.48;
+      const backH = 0.18;
+      this.backMesh.position.set(-(hudW / 2 + backW / 2 + 0.06), hudY - hudH / 2 + backH / 2, 0.05);
+    }
     if (this._zoomLabel) this._zoomLabel.textContent = `${Math.round(s * 100)}%`;
     this._paintHud();
   }
@@ -365,6 +407,44 @@ class StereoVR {
 
   _headSpace() {
     return this.rig || this.camera;
+  }
+
+  _updatePointers() {
+    if (!this._controllers) return;
+    const fallback = 1.5;
+    let hovering = false;
+    for (let i = 0; i < this._controllers.length; i++) {
+      const ctrl = this._controllers[i];
+      const ptr = ctrl.userData.pointer;
+      if (!ptr) continue;
+      const beam = ptr.userData.beam;
+      const dot = ptr.userData.dot;
+      let dist = fallback;
+      let hit = false;
+      try {
+        if (this._raycaster.setFromXRController) this._raycaster.setFromXRController(ctrl);
+        else {
+          ctrl.getWorldPosition(this._tmp);
+          this._forward.set(0, 0, -1).applyQuaternion(ctrl.quaternion);
+          this._raycaster.set(this._tmp, this._forward);
+        }
+        const hits = this.backMesh ? this._raycaster.intersectObject(this.backMesh, false) : [];
+        if (hits.length) {
+          dist = hits[0].distance;
+          hit = true;
+          hovering = true;
+        }
+      } catch (err) {
+        /* ignore */
+      }
+      beam.scale.set(1, dist, 1);
+      beam.position.z = -dist / 2;
+      dot.position.set(0, 0, -dist);
+      dot.scale.setScalar(hit ? 1.6 : 0.85);
+      beam.material.color.setHex(hit ? 0xff3b5c : 0x88f0ff);
+      dot.material.color.setHex(hit ? 0xff3b5c : 0x3de0ff);
+    }
+    if (this.backMesh) this.backMesh.scale.setScalar(hovering ? 1.12 : 1);
   }
 
   _onSelect(ctrl) {
