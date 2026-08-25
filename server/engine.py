@@ -232,7 +232,8 @@ class StereoEngine:
 
             if self.recorder.recording:
                 self.recorder.maybe_rotate(width, height)
-                self.recorder.write(paired.left.image, paired.right.image)
+                ts = (paired.left.timestamp + paired.right.timestamp) * 0.5
+                self.recorder.write(paired.left.image, paired.right.image, timestamp=ts)
 
             left_jpeg = encode_jpeg(paired.left.image, quality, max_width)
             right_jpeg = encode_jpeg(paired.right.image, quality, max_width)

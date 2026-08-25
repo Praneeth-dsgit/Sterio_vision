@@ -56,6 +56,7 @@ class StereoRecorder:
         self._lock = threading.Lock()
         self._active_path: Optional[Path] = None
         self._started_at = 0.0
+        self._pace_origin = 0.0
         self._frames = 0
         self._bytes = 0
         self._ffmpeg = find_ffmpeg()
@@ -119,6 +120,7 @@ class StereoRecorder:
                 raise RuntimeError("Could not start recorder. Install ffmpeg for MP4 output.")
         self._active_path = path
         self._started_at = time.time()
+        self._pace_origin = 0.0
         self._frames = 0
         self.error = None
         return path
@@ -130,23 +132,43 @@ class StereoRecorder:
             return None
         return self.start(width, height)
 
-    def write(self, left: np.ndarray, right: np.ndarray) -> None:
+    def write(self, left: np.ndarray, right: np.ndarray, timestamp: Optional[float] = None) -> None:
         if not self.recording:
             return
         stereo = stack_stereo(left, right, self.layout)
         payload = stereo.tobytes()
+        now = timestamp if timestamp is not None else time.time()
         with self._lock:
-            if self._proc and self._proc.stdin:
-                try:
-                    self._proc.stdin.write(payload)
+            repeats = self._cfr_repeats(now)
+            if repeats <= 0:
+                return
+            for _ in range(repeats):
+                if self._proc and self._proc.stdin:
+                    try:
+                        self._proc.stdin.write(payload)
+                        self._frames += 1
+                        self._bytes += len(payload)
+                    except BrokenPipeError:
+                        self.error = "ffmpeg pipe closed"
+                        self._cleanup_proc()
+                        return
+                elif self._fallback_writer is not None:
+                    self._fallback_writer.write(stereo)
                     self._frames += 1
-                    self._bytes += len(payload)
-                except BrokenPipeError:
-                    self.error = "ffmpeg pipe closed"
-                    self._cleanup_proc()
-            elif self._fallback_writer is not None:
-                self._fallback_writer.write(stereo)
-                self._frames += 1
+                else:
+                    return
+
+    def _cfr_repeats(self, now: float) -> int:
+        """Keep file duration equal to real time when capture is slower than fps."""
+        if self._frames == 0 or self._pace_origin <= 0:
+            self._pace_origin = now
+            return 1
+        elapsed = max(0.0, now - self._pace_origin)
+        expected = int(elapsed * self.fps + 0.5)
+        repeats = expected - self._frames
+        if repeats < 1:
+            return 0
+        return min(repeats, self.fps * 2)
 
     def stop(self) -> Optional[Path]:
         path = self._active_path
