@@ -1,9 +1,12 @@
-function drawBitmap(canvas, bitmap) {
+function drawBitmap(canvas, bitmap, hfovDeg) {
   if (!canvas || !bitmap) return;
   if (canvas.width !== bitmap.width) canvas.width = bitmap.width;
   if (canvas.height !== bitmap.height) canvas.height = bitmap.height;
   const ctx = canvas.getContext("2d");
   ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  if (typeof drawStreamGrid === "function") {
+    drawStreamGrid(ctx, 0, 0, canvas.width, canvas.height, hfovDeg);
+  }
 }
 
 function paintPlaceholder(canvas, label) {
@@ -36,9 +39,16 @@ class StereoVR {
     this.root = document.getElementById("vr-root");
     this.recording = false;
     this.onToggleRecord = null;
+    this.hfovDeg = 70;
     this.zoom = 1;
     this._zoomMin = 0.45;
     this._zoomMax = 2.8;
+    this._dropY = -0.7;
+  }
+
+  setLensFov(deg) {
+    const value = Number(deg);
+    if (value > 0) this.hfovDeg = value;
   }
 
   setStereoEyes(on) {
@@ -98,35 +108,31 @@ class StereoVR {
     this.leftTex.generateMipmaps = false;
     this.rightTex.generateMipmaps = false;
 
-    this._dist = 3.2;
-    this._planeW = 1.6;
-    this._planeH = 0.9;
+    this._dist = 3.8;
+    this._planeW = 2.8;
+    this._planeH = 1.575;
     const geo = new THREE.PlaneGeometry(this._planeW, this._planeH);
     const leftMat = new THREE.MeshBasicMaterial({ map: this.leftTex, depthTest: false, side: THREE.DoubleSide });
     const rightMat = new THREE.MeshBasicMaterial({ map: this.rightTex, depthTest: false, side: THREE.DoubleSide });
 
-    this.rig = new THREE.Group();
-    this.scene.add(this.rig);
+    this.screen = new THREE.Group();
+    this.scene.add(this.screen);
 
     this.leftMesh = new THREE.Mesh(geo, leftMat);
     this.rightMesh = new THREE.Mesh(geo.clone(), rightMat);
-    this.leftMesh.position.set(0, 0, -this._dist);
-    this.rightMesh.position.set(0, 0, -this._dist);
     this.leftMesh.layers.set(1);
     this.rightMesh.layers.set(2);
     this.leftMesh.frustumCulled = false;
     this.rightMesh.frustumCulled = false;
-    this.rig.add(this.leftMesh, this.rightMesh);
+    this.screen.add(this.leftMesh, this.rightMesh);
 
     this.dualLeft = new THREE.Mesh(geo.clone(), leftMat);
     this.dualRight = new THREE.Mesh(geo.clone(), rightMat);
-    this.dualLeft.position.set(-(this._planeW / 2 + 0.25), 0, -(this._dist + 0.4));
-    this.dualRight.position.set(this._planeW / 2 + 0.25, 0, -(this._dist + 0.4));
     this.dualLeft.visible = false;
     this.dualRight.visible = false;
     this.dualLeft.frustumCulled = false;
     this.dualRight.frustumCulled = false;
-    this.rig.add(this.dualLeft, this.dualRight);
+    this.screen.add(this.dualLeft, this.dualRight);
 
     this.hudCanvas = document.createElement("canvas");
     this.hudCanvas.width = 1024;
@@ -136,25 +142,45 @@ class StereoVR {
       new THREE.PlaneGeometry(1.1, 0.28),
       new THREE.MeshBasicMaterial({ map: this.hudTex, transparent: true, depthTest: false })
     );
-    this.hud.position.set(0, -(this._planeH / 2 + 0.35), -(this._dist - 0.8));
     this.hud.frustumCulled = false;
-    this.rig.add(this.hud);
-    this._bindZoomControls();
-    this.setZoom(this.zoom);
-
-    this.controller = this.renderer.xr.getController(0);
-    this.controller.addEventListener("select", () => {
-      if (this.onToggleRecord) this.onToggleRecord();
-    });
-    this.scene.add(this.controller);
-    this._applyMode();
+    this.screen.add(this.hud);
 
     this._worldPos = new THREE.Vector3();
     this._worldQuat = new THREE.Quaternion();
+    this._tmp = new THREE.Vector3();
+    this._right = new THREE.Vector3();
+    this._up = new THREE.Vector3();
+    this._forward = new THREE.Vector3();
+    this._grabOffset = new THREE.Vector3();
+    this._placed = false;
+    this._grabbing = false;
+    this._grabCtrl = null;
+
+    this._bindOverlayControls();
+    this.setZoom(this.zoom);
+
+    this.camera.layers.enable(1);
+    this.camera.layers.enable(2);
+    this._controllers = [];
+    for (let i = 0; i < 2; i++) {
+      const ctrl = this.renderer.xr.getController(i);
+      ctrl.addEventListener("squeezestart", () => this._beginGrab(ctrl));
+      ctrl.addEventListener("squeezeend", () => this._endGrab(ctrl));
+      if (i === 0) {
+        ctrl.addEventListener("select", () => {
+          if (this._grabbing) return;
+          if (this.onToggleRecord) this.onToggleRecord();
+        });
+      }
+      this.scene.add(ctrl);
+      this._controllers.push(ctrl);
+    }
+    this.controller = this._controllers[0];
+    this._applyMode();
 
     this.unsub = this.stream.onFrame((frame) => {
-      drawBitmap(this.leftCanvas, frame.left);
-      drawBitmap(this.rightCanvas, frame.right);
+      drawBitmap(this.leftCanvas, frame.left, this.hfovDeg);
+      drawBitmap(this.rightCanvas, frame.right, this.hfovDeg);
       this.leftTex.needsUpdate = true;
       this.rightTex.needsUpdate = true;
     });
@@ -170,15 +196,13 @@ class StereoVR {
           if (this.renderer.xr.updateCamera) this.renderer.xr.updateCamera(this.camera);
           const xrCam = this.renderer.xr.getCamera();
           if (xrCam && xrCam.getWorldPosition) {
-            xrCam.getWorldPosition(this._worldPos);
-            xrCam.getWorldQuaternion(this._worldQuat);
-            this.rig.position.copy(this._worldPos);
-            this.rig.quaternion.copy(this._worldQuat);
+            if (!this._placed) this._placeInFront(xrCam);
             if (xrCam.cameras && xrCam.cameras.length >= 2) {
               xrCam.cameras[0].layers.enable(1);
               xrCam.cameras[1].layers.enable(2);
             }
           }
+          this._updateGrab();
         } catch (err) {
           /* emulator can throw on the first XR frames */
         }
@@ -205,7 +229,7 @@ class StereoVR {
     this._exiting = true;
     this.active = false;
     this.root.classList.remove("active");
-    this._unbindZoomControls();
+    this._unbindOverlayControls();
     if (this.unsub) {
       this.unsub();
       this.unsub = null;
@@ -248,21 +272,70 @@ class StereoVR {
     this.dualRight.scale.set(s, s, 1);
     const w = this._planeW * s;
     const h = this._planeH * s;
-    this.dualLeft.position.set(-(w / 2 + 0.25), 0, -(this._dist + 0.4));
-    this.dualRight.position.set(w / 2 + 0.25, 0, -(this._dist + 0.4));
-    this.hud.position.set(0, -(h / 2 + 0.35), -(this._dist - 0.8));
+    this.dualLeft.position.set(-(w / 2 + 0.25), 0, -0.05);
+    this.dualRight.position.set(w / 2 + 0.25, 0, -0.05);
+    this.hud.position.set(0, -(h / 2 + 0.22), 0.04);
     if (this._zoomLabel) this._zoomLabel.textContent = `${Math.round(s * 100)}%`;
     this._paintHud();
   }
 
-  _bindZoomControls() {
+  _placeInFront(cam) {
+    if (!this.screen || !cam) return;
+    if (cam.getWorldPosition) {
+      cam.getWorldPosition(this._worldPos);
+      cam.getWorldQuaternion(this._worldQuat);
+    } else {
+      this.camera.getWorldPosition(this._worldPos);
+      this.camera.getWorldQuaternion(this._worldQuat);
+    }
+    this._forward.set(0, 0, -1).applyQuaternion(this._worldQuat);
+    this.screen.position.copy(this._worldPos).addScaledVector(this._forward, this._dist);
+    this.screen.position.y += this._dropY;
+    this.screen.quaternion.copy(this._worldQuat);
+    this._placed = true;
+  }
+
+  _beginGrab(ctrl) {
+    if (!this.screen || !ctrl) return;
+    this._grabbing = true;
+    this._grabCtrl = ctrl;
+    ctrl.getWorldPosition(this._tmp);
+    this._grabOffset.copy(this.screen.position).sub(this._tmp);
+  }
+
+  _endGrab(ctrl) {
+    if (this._grabCtrl === ctrl) {
+      this._grabbing = false;
+      this._grabCtrl = null;
+    }
+  }
+
+  _updateGrab() {
+    if (!this._grabbing || !this._grabCtrl || !this.screen) return;
+    this._grabCtrl.getWorldPosition(this._tmp);
+    this.screen.position.copy(this._tmp).add(this._grabOffset);
+  }
+
+  _nudgeScreen(dx, dy, dz) {
+    if (!this.screen) return;
+    this.camera.getWorldQuaternion(this._worldQuat);
+    this._right.set(1, 0, 0).applyQuaternion(this._worldQuat);
+    this._up.set(0, 1, 0).applyQuaternion(this._worldQuat);
+    this._forward.set(0, 0, -1).applyQuaternion(this._worldQuat);
+    this.screen.position.addScaledVector(this._right, dx);
+    this.screen.position.addScaledVector(this._up, dy);
+    this.screen.position.addScaledVector(this._forward, dz);
+  }
+
+  _bindOverlayControls() {
     const bar = document.createElement("div");
     bar.className = "vr-zoom-bar";
     bar.innerHTML =
       '<button type="button" data-zoom="out" aria-label="Zoom out">−</button>' +
       '<span class="vr-zoom-label">100%</span>' +
       '<button type="button" data-zoom="in" aria-label="Zoom in">+</button>' +
-      '<button type="button" data-zoom="reset" class="vr-zoom-reset">Reset</button>';
+      '<button type="button" data-zoom="reset" class="vr-zoom-reset">Reset zoom</button>' +
+      '<button type="button" data-place="reset" class="vr-zoom-reset">Reset place</button>';
     this.root.appendChild(bar);
     this._zoomBar = bar;
     this._zoomLabel = bar.querySelector(".vr-zoom-label");
@@ -274,10 +347,15 @@ class StereoVR {
       this._zoomHold = setInterval(() => step(factor), 90);
     };
     bar.addEventListener("pointerdown", (event) => {
-      const btn = event.target.closest("[data-zoom]");
+      const btn = event.target.closest("[data-zoom], [data-place]");
       if (!btn) return;
       event.preventDefault();
       event.stopPropagation();
+      if (btn.getAttribute("data-place") === "reset") {
+        const xrCam = this.renderer && this.renderer.xr && this.renderer.xr.getCamera();
+        this._placeInFront(xrCam || this.camera);
+        return;
+      }
       const action = btn.getAttribute("data-zoom");
       if (action === "reset") this.setZoom(1);
       else startHold(action === "in" ? 1.08 : 1 / 1.08);
@@ -288,8 +366,13 @@ class StereoVR {
     bar.addEventListener("pointercancel", stopHold);
 
     this._onWheel = (event) => {
+      if (event.target.closest(".vr-zoom-bar")) return;
       event.preventDefault();
-      this.setZoom(this.zoom * (event.deltaY > 0 ? 0.92 : 1.08));
+      if (event.shiftKey) {
+        this._nudgeScreen(0, 0, event.deltaY > 0 ? -0.12 : 0.12);
+      } else {
+        this.setZoom(this.zoom * (event.deltaY > 0 ? 0.92 : 1.08));
+      }
     };
     this._onKey = (event) => {
       if (!this.active) return;
@@ -302,9 +385,49 @@ class StereoVR {
       } else if (event.key === "0") {
         event.preventDefault();
         this.setZoom(1);
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        const xrCam = this.renderer && this.renderer.xr && this.renderer.xr.getCamera();
+        this._placeInFront(xrCam || this.camera);
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        this._nudgeScreen(event.shiftKey ? 0 : -0.08, 0, event.shiftKey ? -0.08 : 0);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        this._nudgeScreen(event.shiftKey ? 0 : 0.08, 0, event.shiftKey ? 0.08 : 0);
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        this._nudgeScreen(0, 0.08, 0);
+      } else if (event.key === "ArrowDown") {
+        event.preventDefault();
+        this._nudgeScreen(0, -0.08, 0);
       }
     };
+    this._onPtrDown = (event) => {
+      if (event.button !== 0) return;
+      if (event.target.closest(".vr-zoom-bar")) return;
+      this._mouseDrag = true;
+      this._ptrShift = event.shiftKey;
+      try {
+        event.target.setPointerCapture(event.pointerId);
+      } catch (err) {
+        /* ignore */
+      }
+    };
+    this._onPtrMove = (event) => {
+      if (!this._mouseDrag || !this.screen) return;
+      const k = 0.0035 * this._dist;
+      if (event.shiftKey || this._ptrShift) this._nudgeScreen(0, 0, -event.movementY * k);
+      else this._nudgeScreen(event.movementX * k, -event.movementY * k, 0);
+    };
+    this._onPtrUp = () => {
+      this._mouseDrag = false;
+    };
     this.root.addEventListener("wheel", this._onWheel, { passive: false });
+    this.root.addEventListener("pointerdown", this._onPtrDown);
+    this.root.addEventListener("pointermove", this._onPtrMove);
+    this.root.addEventListener("pointerup", this._onPtrUp);
+    this.root.addEventListener("pointercancel", this._onPtrUp);
     window.addEventListener("keydown", this._onKey);
   }
 
@@ -315,17 +438,30 @@ class StereoVR {
     }
   }
 
-  _unbindZoomControls() {
+  _unbindOverlayControls() {
     this._stopZoomHold();
+    this._mouseDrag = false;
+    this._grabbing = false;
+    this._grabCtrl = null;
     if (this._onWheel) this.root.removeEventListener("wheel", this._onWheel);
+    if (this._onPtrDown) this.root.removeEventListener("pointerdown", this._onPtrDown);
+    if (this._onPtrMove) this.root.removeEventListener("pointermove", this._onPtrMove);
+    if (this._onPtrUp) {
+      this.root.removeEventListener("pointerup", this._onPtrUp);
+      this.root.removeEventListener("pointercancel", this._onPtrUp);
+    }
     if (this._onKey) window.removeEventListener("keydown", this._onKey);
     this._onWheel = null;
+    this._onPtrDown = null;
+    this._onPtrMove = null;
+    this._onPtrUp = null;
     this._onKey = null;
     this._zoomBar = null;
     this._zoomLabel = null;
   }
 
   _pollZoom(time, xrFrame) {
+    if (this._grabbing) return;
     if (!xrFrame || !xrFrame.session) return;
     const dt = this._lastZoomT ? Math.min(0.05, (time - this._lastZoomT) / 1000) : 0.016;
     this._lastZoomT = time;
@@ -364,11 +500,11 @@ class StereoVR {
       ctx.fillRect(20, 20, 984, 216);
     }
     ctx.fillStyle = this.recording ? "#ff3b5c" : "#3de0ff";
-    ctx.font = "700 48px sans-serif";
-    ctx.fillText(this.recording ? "RECORDING  ·  trigger to stop" : "Trigger: record", 56, 110);
+    ctx.font = "700 42px sans-serif";
+    ctx.fillText(this.recording ? "RECORDING  ·  trigger to stop" : "Grip: drag screen   ·   trigger: record", 48, 110);
     ctx.fillStyle = "#c5d0e8";
     ctx.font = "600 40px sans-serif";
-    ctx.fillText(`Zoom ${Math.round((this.zoom || 1) * 100)}%  ·  stick or + −`, 56, 180);
+    ctx.fillText(`Zoom ${Math.round((this.zoom || 1) * 100)}%  ·  stick / drag / arrows`, 56, 180);
     if (this.hudTex) this.hudTex.needsUpdate = true;
   }
 }

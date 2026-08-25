@@ -2,6 +2,25 @@ const stream = new StereoStream();
 const vr = new StereoVR(stream);
 const leftCanvas = document.getElementById("left-canvas");
 const rightCanvas = document.getElementById("right-canvas");
+let lensHfov = 70;
+let capW = 1280;
+let capH = 720;
+let lastCams = { leftIndex: 0, rightIndex: 1 };
+
+function applyEyeLabels() {
+  const swapped = stream.swapEyes;
+  const leftIdx = swapped ? lastCams.rightIndex : lastCams.leftIndex;
+  const rightIdx = swapped ? lastCams.leftIndex : lastCams.rightIndex;
+  const vfov = lensVerticalFov(lensHfov, capW, capH);
+  document.getElementById("left-eye-tag").textContent = swapped ? "RIGHT" : "LEFT";
+  document.getElementById("right-eye-tag").textContent = swapped ? "LEFT" : "RIGHT";
+  document.getElementById("left-cam-label").textContent =
+    `cam ${leftIdx} · ${lensHfov.toFixed(0)}°×${vfov.toFixed(0)}°`;
+  document.getElementById("right-cam-label").textContent =
+    `cam ${rightIdx} · ${lensHfov.toFixed(0)}°×${vfov.toFixed(0)}°`;
+  document.getElementById("btn-swap").classList.toggle("on", swapped);
+  document.getElementById("btn-swap").textContent = swapped ? "Swap eyes (on)" : "Swap eyes";
+}
 
 function drawPreview(canvas, bitmap) {
   const rect = canvas.getBoundingClientRect();
@@ -18,7 +37,15 @@ function drawPreview(canvas, bitmap) {
   const scale = Math.max(w / bitmap.width, h / bitmap.height);
   const dw = bitmap.width * scale;
   const dh = bitmap.height * scale;
-  ctx.drawImage(bitmap, (w - dw) / 2, (h - dh) / 2, dw, dh);
+  const ox = (w - dw) / 2;
+  const oy = (h - dh) / 2;
+  ctx.drawImage(bitmap, ox, oy, dw, dh);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, w, h);
+  ctx.clip();
+  drawStreamGrid(ctx, ox, oy, dw, dh, lensHfov);
+  ctx.restore();
 }
 
 function setPill(id, text, cls) {
@@ -37,8 +64,16 @@ async function api(path, opts) {
 function renderStatus(data) {
   const rec = data.record || {};
   const cams = data.cameras || {};
-  document.getElementById("left-cam-label").textContent = `cam ${cams.left?.index ?? 0}`;
-  document.getElementById("right-cam-label").textContent = `cam ${cams.right?.index ?? 1}`;
+  const hfov = Number(data.config?.cameras?.hfov_deg) || 70;
+  lensHfov = hfov;
+  if (vr.setLensFov) vr.setLensFov(hfov);
+  capW = Number(data.config?.cameras?.width) || 1280;
+  capH = Number(data.config?.cameras?.height) || 720;
+  lastCams = {
+    leftIndex: cams.left?.index ?? 0,
+    rightIndex: cams.right?.index ?? 1,
+  };
+  applyEyeLabels();
 
   setPill("pill-link", stream.connected ? "Live" : "Reconnecting", stream.connected ? "ok" : "warn");
   setPill("pill-rec", rec.recording ? "REC" : "Idle", rec.recording ? "live" : "");
@@ -99,6 +134,7 @@ vr.onToggleRecord = toggleRecord;
 document.getElementById("btn-record").addEventListener("click", toggleRecord);
 document.getElementById("btn-swap").addEventListener("click", () => {
   stream.swapEyes = !stream.swapEyes;
+  applyEyeLabels();
 });
 document.getElementById("btn-vr").addEventListener("click", async () => {
   try {

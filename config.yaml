@@ -9,6 +9,9 @@ cameras:
   fps: 30
   # MJPG is required on USB to run two cameras without bandwidth collapse
   fourcc: MJPG
+  # Horizontal FOV of the USB lens, from the datasheet (typical 720p webcam ~60–78°).
+  # Used for the live angle grid. Vertical FOV is derived from the frame aspect ratio.
+  hfov_deg: 70
   # Flip if a camera is mounted upside down
   left_flip: none    # none | h | v | hv
   right_flip: none

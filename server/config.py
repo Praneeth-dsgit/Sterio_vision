@@ -20,6 +20,7 @@ DEFAULTS: dict[str, Any] = {
         "fourcc": "MJPG",
         "left_flip": "none",
         "right_flip": "none",
+        "hfov_deg": 70,
     },
     "stream": {
         "jpeg_quality": 85,
