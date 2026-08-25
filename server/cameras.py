@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import os
 import platform
-import struct
 import threading
 import time
 from dataclasses import dataclass
@@ -11,12 +9,6 @@ from typing import Optional
 
 import cv2
 import numpy as np
-
-V4L2_CAP_VIDEO_CAPTURE = 0x00000001
-V4L2_CAP_VIDEO_CAPTURE_MPLANE = 0x00001000
-V4L2_CAP_DEVICE_CAPS = 0x80000000
-# VIDIOC_QUERYCAP = _IOWR('V', 0, struct v4l2_capability)  (104 bytes)
-_VIDIOC_QUERYCAP = (3 << 30) | (104 << 16) | (ord("V") << 8)
 
 
 FLIP_MAP = {
@@ -37,39 +29,6 @@ def _fourcc_str(value: int) -> str:
         return "".join(chr((int(value) >> (8 * i)) & 0xFF) for i in range(4))
     except Exception:
         return "????"
-
-
-def is_v4l_capture(index: int) -> bool:
-    """True if /dev/videoN is a real capture node, not UVC metadata."""
-    if platform.system() == "Windows":
-        return True
-    node = Path(f"/dev/video{index}")
-    if not node.exists():
-        return False
-    name_path = Path(f"/sys/class/video4linux/video{index}/name")
-    try:
-        label = name_path.read_text(encoding="utf-8", errors="ignore").lower()
-        if "metadata" in label:
-            return False
-    except OSError:
-        pass
-    try:
-        import fcntl
-
-        fd = os.open(str(node), os.O_RDONLY | os.O_NONBLOCK)
-    except OSError:
-        return False
-    try:
-        buf = bytearray(104)
-        fcntl.ioctl(fd, _VIDIOC_QUERYCAP, buf, True)
-        caps = struct.unpack_from("<I", buf, 84)[0]
-        device_caps = struct.unpack_from("<I", buf, 88)[0]
-        flags = device_caps if caps & V4L2_CAP_DEVICE_CAPS else caps
-        return bool(flags & (V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_VIDEO_CAPTURE_MPLANE))
-    except OSError:
-        return False
-    finally:
-        os.close(fd)
 
 
 def looks_like_video(frame) -> bool:
@@ -97,10 +56,6 @@ def fit_frame(image: np.ndarray, width: int, height: int) -> np.ndarray:
 
 
 def open_capture(index: int, width: int, height: int, fps: int, fourcc: str) -> cv2.VideoCapture:
-    if platform.system() != "Windows" and not is_v4l_capture(index):
-        print(f"[cam {index}] skip /dev/video{index}: not a V4L capture node", flush=True)
-        return cv2.VideoCapture()
-
     if platform.system() == "Windows":
         backends = (cv2.CAP_DSHOW, cv2.CAP_MSMF)
     else:
@@ -145,7 +100,7 @@ def discover_capture_indices(max_index: int = 10) -> list:
         return list(range(max_index))
     found = []
     for index in range(max_index):
-        if not is_v4l_capture(index):
+        if not Path(f"/dev/video{index}").exists():
             continue
         cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
         if not cap.isOpened():
@@ -214,6 +169,34 @@ def test_pattern(width: int, height: int, label: str, hue: int, t: float) -> np.
         cv2.LINE_AA,
     )
     return frame
+
+
+def open_capture(index: int, width: int, height: int, fps: int, fourcc: str) -> cv2.VideoCapture:
+    if platform.system() == "Windows":
+        backends = (cv2.CAP_DSHOW, cv2.CAP_MSMF)
+    else:
+        backends = (cv2.CAP_V4L2, cv2.CAP_ANY)
+
+    for backend in backends:
+        cap = cv2.VideoCapture(index, backend)
+        if not cap.isOpened():
+            continue
+        cap.set(cv2.CAP_PROP_FOURCC, _fourcc_int(fourcc))
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        cap.set(cv2.CAP_PROP_FPS, fps)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        ok, frame = cap.read()
+        if ok and frame is not None:
+            return cap
+        cap.release()
+    return cv2.VideoCapture()
+
+
+def list_cameras(max_index: int = 5) -> list:
+    # Do not open devices here on Windows — MSMF/DSHOW probes steal the camera
+    # and then live capture fails with "can't grab frame".
+    return [{"index": i, "name": f"Camera {i}"} for i in range(max_index)]
 
 
 @dataclass
