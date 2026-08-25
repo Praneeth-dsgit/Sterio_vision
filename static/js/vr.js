@@ -144,16 +144,18 @@ class StereoVR {
     this.leftTex.generateMipmaps = false;
     this.rightTex.generateMipmaps = false;
 
-    this._dist = 3.8;
-    this._planeW = 2.8;
-    this._planeH = 1.575;
+    this._dist = 2.4;
+    this._planeW = 2.4;
+    this._planeH = 1.35;
     const geo = new THREE.PlaneGeometry(this._planeW, this._planeH);
     const leftMat = new THREE.MeshBasicMaterial({ map: this.leftTex, depthTest: false, side: THREE.DoubleSide });
     const rightMat = new THREE.MeshBasicMaterial({ map: this.rightTex, depthTest: false, side: THREE.DoubleSide });
 
+    this.rig = new THREE.Group();
+    this.scene.add(this.rig);
     this.screen = new THREE.Group();
     this.screen.position.set(0, this._dropY, -this._dist);
-    this.camera.add(this.screen);
+    this.rig.add(this.screen);
 
     this.leftMesh = new THREE.Mesh(geo, leftMat);
     this.rightMesh = new THREE.Mesh(geo.clone(), rightMat);
@@ -183,7 +185,7 @@ class StereoVR {
     this.screen.add(this.hud);
 
     this.backMesh = makeBackMesh(THREE);
-    this.camera.add(this.backMesh);
+    this.rig.add(this.backMesh);
     this._raycaster = new THREE.Raycaster();
 
     this._worldPos = new THREE.Vector3();
@@ -226,15 +228,7 @@ class StereoVR {
       if (this.renderer.xr.isPresenting) {
         try {
           this._pollZoom(time, xrFrame);
-          if (this.renderer.xr.updateCamera) this.renderer.xr.updateCamera(this.camera);
-          const xrCam = this.renderer.xr.getCamera();
-          this._attachHeadLocked(xrCam || this.camera);
-          if (xrCam && xrCam.cameras && xrCam.cameras.length >= 2) {
-            xrCam.cameras[0].layers.enable(1);
-            xrCam.cameras[1].layers.enable(2);
-          }
-          if (xrCam && xrCam.updateMatrixWorld) xrCam.updateMatrixWorld(true);
-          else this.camera.updateMatrixWorld(true);
+          this._syncHeadPose();
           this._updateGrab();
         } catch (err) {
           /* emulator can throw on the first XR frames */
@@ -318,14 +312,44 @@ class StereoVR {
     this.screen.quaternion.identity();
   }
 
-  _attachHeadLocked(head) {
-    if (!head || !this.screen) return;
-    if (this.screen.parent !== head) head.add(this.screen);
-    if (this.backMesh && this.backMesh.parent !== head) head.add(this.backMesh);
+  _syncHeadPose() {
+    if (!this.rig || !this.camera) return;
+    if (this.renderer.xr.updateCamera) this.renderer.xr.updateCamera(this.camera);
+    this.camera.updateMatrixWorld(true);
+    this.camera.layers.enable(1);
+    this.camera.layers.enable(2);
+    const xrCam = this.renderer.xr.getCamera();
+    const eyes = xrCam && xrCam.cameras;
+    if (eyes && eyes.length >= 2) {
+      eyes[0].updateMatrixWorld(true);
+      eyes[1].updateMatrixWorld(true);
+      eyes[0].layers.enable(0);
+      eyes[0].layers.enable(1);
+      eyes[1].layers.enable(0);
+      eyes[1].layers.enable(2);
+      eyes[0].getWorldPosition(this._worldPos);
+      eyes[1].getWorldPosition(this._tmp);
+      this._worldPos.add(this._tmp).multiplyScalar(0.5);
+      eyes[0].getWorldQuaternion(this._worldQuat);
+      this.rig.position.copy(this._worldPos);
+      this.rig.quaternion.copy(this._worldQuat);
+    } else {
+      if (xrCam) {
+        xrCam.updateMatrixWorld(true);
+        xrCam.layers.enable(1);
+        xrCam.layers.enable(2);
+        xrCam.matrixWorld.decompose(this._worldPos, this._worldQuat, this._tmp);
+      } else {
+        this.camera.matrixWorld.decompose(this._worldPos, this._worldQuat, this._tmp);
+      }
+      this.rig.position.copy(this._worldPos);
+      this.rig.quaternion.copy(this._worldQuat);
+    }
+    this.rig.updateMatrixWorld(true);
   }
 
   _headSpace() {
-    return (this.screen && this.screen.parent) || this.camera;
+    return this.rig || this.camera;
   }
 
   _onSelect(ctrl) {
