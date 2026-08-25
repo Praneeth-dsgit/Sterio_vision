@@ -36,6 +36,9 @@ class StereoVR {
     this.root = document.getElementById("vr-root");
     this.recording = false;
     this.onToggleRecord = null;
+    this.zoom = 1;
+    this._zoomMin = 0.45;
+    this._zoomMax = 2.8;
   }
 
   setStereoEyes(on) {
@@ -95,8 +98,10 @@ class StereoVR {
     this.leftTex.generateMipmaps = false;
     this.rightTex.generateMipmaps = false;
 
-    const dist = 2.0;
-    const geo = new THREE.PlaneGeometry(2.3, 1.3);
+    this._dist = 3.2;
+    this._planeW = 1.6;
+    this._planeH = 0.9;
+    const geo = new THREE.PlaneGeometry(this._planeW, this._planeH);
     const leftMat = new THREE.MeshBasicMaterial({ map: this.leftTex, depthTest: false, side: THREE.DoubleSide });
     const rightMat = new THREE.MeshBasicMaterial({ map: this.rightTex, depthTest: false, side: THREE.DoubleSide });
 
@@ -105,8 +110,8 @@ class StereoVR {
 
     this.leftMesh = new THREE.Mesh(geo, leftMat);
     this.rightMesh = new THREE.Mesh(geo.clone(), rightMat);
-    this.leftMesh.position.set(0, 0, -dist);
-    this.rightMesh.position.set(0, 0, -dist);
+    this.leftMesh.position.set(0, 0, -this._dist);
+    this.rightMesh.position.set(0, 0, -this._dist);
     this.leftMesh.layers.set(1);
     this.rightMesh.layers.set(2);
     this.leftMesh.frustumCulled = false;
@@ -115,8 +120,8 @@ class StereoVR {
 
     this.dualLeft = new THREE.Mesh(geo.clone(), leftMat);
     this.dualRight = new THREE.Mesh(geo.clone(), rightMat);
-    this.dualLeft.position.set(-1.25, 0, -2.4);
-    this.dualRight.position.set(1.25, 0, -2.4);
+    this.dualLeft.position.set(-(this._planeW / 2 + 0.25), 0, -(this._dist + 0.4));
+    this.dualRight.position.set(this._planeW / 2 + 0.25, 0, -(this._dist + 0.4));
     this.dualLeft.visible = false;
     this.dualRight.visible = false;
     this.dualLeft.frustumCulled = false;
@@ -131,10 +136,11 @@ class StereoVR {
       new THREE.PlaneGeometry(1.1, 0.28),
       new THREE.MeshBasicMaterial({ map: this.hudTex, transparent: true, depthTest: false })
     );
-    this.hud.position.set(0, -0.72, -1.7);
+    this.hud.position.set(0, -(this._planeH / 2 + 0.35), -(this._dist - 0.8));
     this.hud.frustumCulled = false;
     this.rig.add(this.hud);
-    this._paintHud();
+    this._bindZoomControls();
+    this.setZoom(this.zoom);
 
     this.controller = this.renderer.xr.getController(0);
     this.controller.addEventListener("select", () => {
@@ -153,10 +159,14 @@ class StereoVR {
       this.rightTex.needsUpdate = true;
     });
 
-    this.renderer.setAnimationLoop(() => {
+    this._xrSession = null;
+    this._exiting = false;
+
+    const onXrFrame = (time, xrFrame) => {
       if (!this.renderer || !this.renderer.xr) return;
       if (this.renderer.xr.isPresenting) {
         try {
+          this._pollZoom(time, xrFrame);
           if (this.renderer.xr.updateCamera) this.renderer.xr.updateCamera(this.camera);
           const xrCam = this.renderer.xr.getCamera();
           if (xrCam && xrCam.getWorldPosition) {
@@ -174,14 +184,16 @@ class StereoVR {
         }
       }
       this.renderer.render(this.scene, this.camera);
-    });
+    };
 
     try {
       const session = await navigator.xr.requestSession("immersive-vr", {
         optionalFeatures: ["local-floor"],
       });
-      await this.renderer.xr.setSession(session);
+      this._xrSession = session;
       session.addEventListener("end", () => this.exit());
+      await this.renderer.xr.setSession(session);
+      this.renderer.setAnimationLoop(onXrFrame);
     } catch (err) {
       this.exit();
       throw err;
@@ -189,20 +201,146 @@ class StereoVR {
   }
 
   exit() {
+    if (this._exiting) return;
+    this._exiting = true;
     this.active = false;
     this.root.classList.remove("active");
+    this._unbindZoomControls();
     if (this.unsub) {
       this.unsub();
       this.unsub = null;
     }
-    if (this.renderer) {
-      this.renderer.setAnimationLoop(null);
-      const session = this.renderer.xr.getSession();
-      if (session) session.end().catch(() => {});
-      this.renderer.dispose();
-      this.renderer = null;
+    const renderer = this.renderer;
+    this.renderer = null;
+    const session = this._xrSession;
+    this._xrSession = null;
+    if (renderer) {
+      try {
+        renderer.setAnimationLoop(null);
+      } catch (err) {
+        /* IWE: cancelAnimationFrame on a null handle */
+      }
+      try {
+        if (session && renderer.xr && renderer.xr.isPresenting) {
+          session.end().catch(() => {});
+        }
+      } catch (err) {
+        /* IWE session.end can re-enter Three.js stop() */
+      }
+      try {
+        renderer.dispose();
+      } catch (err) {
+        /* ignore */
+      }
     }
     this.root.innerHTML = "";
+    this._exiting = false;
+  }
+
+  setZoom(value) {
+    const next = Math.min(this._zoomMax, Math.max(this._zoomMin, value));
+    this.zoom = next;
+    if (!this.leftMesh) return;
+    const s = next;
+    this.leftMesh.scale.set(s, s, 1);
+    this.rightMesh.scale.set(s, s, 1);
+    this.dualLeft.scale.set(s, s, 1);
+    this.dualRight.scale.set(s, s, 1);
+    const w = this._planeW * s;
+    const h = this._planeH * s;
+    this.dualLeft.position.set(-(w / 2 + 0.25), 0, -(this._dist + 0.4));
+    this.dualRight.position.set(w / 2 + 0.25, 0, -(this._dist + 0.4));
+    this.hud.position.set(0, -(h / 2 + 0.35), -(this._dist - 0.8));
+    if (this._zoomLabel) this._zoomLabel.textContent = `${Math.round(s * 100)}%`;
+    this._paintHud();
+  }
+
+  _bindZoomControls() {
+    const bar = document.createElement("div");
+    bar.className = "vr-zoom-bar";
+    bar.innerHTML =
+      '<button type="button" data-zoom="out" aria-label="Zoom out">−</button>' +
+      '<span class="vr-zoom-label">100%</span>' +
+      '<button type="button" data-zoom="in" aria-label="Zoom in">+</button>' +
+      '<button type="button" data-zoom="reset" class="vr-zoom-reset">Reset</button>';
+    this.root.appendChild(bar);
+    this._zoomBar = bar;
+    this._zoomLabel = bar.querySelector(".vr-zoom-label");
+
+    const step = (factor) => this.setZoom(this.zoom * factor);
+    const startHold = (factor) => {
+      step(factor);
+      this._stopZoomHold();
+      this._zoomHold = setInterval(() => step(factor), 90);
+    };
+    bar.addEventListener("pointerdown", (event) => {
+      const btn = event.target.closest("[data-zoom]");
+      if (!btn) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const action = btn.getAttribute("data-zoom");
+      if (action === "reset") this.setZoom(1);
+      else startHold(action === "in" ? 1.08 : 1 / 1.08);
+    });
+    const stopHold = () => this._stopZoomHold();
+    bar.addEventListener("pointerup", stopHold);
+    bar.addEventListener("pointerleave", stopHold);
+    bar.addEventListener("pointercancel", stopHold);
+
+    this._onWheel = (event) => {
+      event.preventDefault();
+      this.setZoom(this.zoom * (event.deltaY > 0 ? 0.92 : 1.08));
+    };
+    this._onKey = (event) => {
+      if (!this.active) return;
+      if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        this.setZoom(this.zoom * 1.1);
+      } else if (event.key === "-" || event.key === "_") {
+        event.preventDefault();
+        this.setZoom(this.zoom / 1.1);
+      } else if (event.key === "0") {
+        event.preventDefault();
+        this.setZoom(1);
+      }
+    };
+    this.root.addEventListener("wheel", this._onWheel, { passive: false });
+    window.addEventListener("keydown", this._onKey);
+  }
+
+  _stopZoomHold() {
+    if (this._zoomHold) {
+      clearInterval(this._zoomHold);
+      this._zoomHold = null;
+    }
+  }
+
+  _unbindZoomControls() {
+    this._stopZoomHold();
+    if (this._onWheel) this.root.removeEventListener("wheel", this._onWheel);
+    if (this._onKey) window.removeEventListener("keydown", this._onKey);
+    this._onWheel = null;
+    this._onKey = null;
+    this._zoomBar = null;
+    this._zoomLabel = null;
+  }
+
+  _pollZoom(time, xrFrame) {
+    if (!xrFrame || !xrFrame.session) return;
+    const dt = this._lastZoomT ? Math.min(0.05, (time - this._lastZoomT) / 1000) : 0.016;
+    this._lastZoomT = time;
+    let axisY = 0;
+    const sources = xrFrame.session.inputSources || [];
+    for (let i = 0; i < sources.length; i++) {
+      const pad = sources[i].gamepad;
+      if (!pad || !pad.axes || !pad.axes.length) continue;
+      const y3 = pad.axes.length > 3 ? pad.axes[3] : 0;
+      const y1 = pad.axes.length > 1 ? pad.axes[1] : 0;
+      const y = Math.abs(y3) >= Math.abs(y1) ? y3 : y1;
+      if (Math.abs(y) > Math.abs(axisY)) axisY = y;
+    }
+    if (Math.abs(axisY) < 0.18) return;
+    this.setZoom(this.zoom * Math.exp(-axisY * 1.35 * dt));
   }
 
   _applyMode() {
@@ -226,8 +364,11 @@ class StereoVR {
       ctx.fillRect(20, 20, 984, 216);
     }
     ctx.fillStyle = this.recording ? "#ff3b5c" : "#3de0ff";
-    ctx.font = "700 64px sans-serif";
-    ctx.fillText(this.recording ? "RECORDING  ·  trigger to stop" : "Trigger: start recording", 56, 150);
+    ctx.font = "700 48px sans-serif";
+    ctx.fillText(this.recording ? "RECORDING  ·  trigger to stop" : "Trigger: record", 56, 110);
+    ctx.fillStyle = "#c5d0e8";
+    ctx.font = "600 40px sans-serif";
+    ctx.fillText(`Zoom ${Math.round((this.zoom || 1) * 100)}%  ·  stick or + −`, 56, 180);
     if (this.hudTex) this.hudTex.needsUpdate = true;
   }
 }
