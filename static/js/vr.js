@@ -190,6 +190,7 @@ class StereoVR {
     this.leftMesh.renderOrder = 1;
     this.rightMesh.renderOrder = 1;
     this.screen.add(this.leftMesh, this.rightMesh);
+    this._vp = new THREE.Vector4();
     this._bindStereoEyes();
 
     this.dualLeft = new THREE.Mesh(geo.clone(), leftMat);
@@ -352,31 +353,31 @@ class StereoVR {
     this.screen.quaternion.identity();
   }
 
+  _isRightEye(renderer, camera) {
+    const xrCam = renderer.xr && renderer.xr.getCamera && renderer.xr.getCamera();
+    const cams = xrCam && xrCam.cameras;
+    if (cams && cams.length >= 2) {
+      if (camera === cams[1]) return true;
+      if (camera === cams[0]) return false;
+      const lv = cams[0].viewport;
+      const rv = cams[1].viewport;
+      if (camera && camera.viewport && lv && rv && lv.x !== rv.x) {
+        return camera.viewport.x === rv.x;
+      }
+    }
+    if (camera && camera.viewport && camera.viewport.x > 0) return true;
+    if (renderer.getCurrentViewport) {
+      renderer.getCurrentViewport(this._vp);
+      if (this._vp.x > 0) return true;
+    }
+    return false;
+  }
+
   _bindStereoEyes() {
     const self = this;
     this.leftMesh.onBeforeRender = function (renderer, scene, camera) {
-      if (!self.stereoEyes) {
-        this.visible = true;
-        return;
-      }
-      const cams = renderer.xr && renderer.xr.getCamera && renderer.xr.getCamera().cameras;
-      if (!cams || cams.length < 2) {
-        this.visible = true;
-        return;
-      }
-      this.visible = camera === cams[0];
-    };
-    this.rightMesh.onBeforeRender = function (renderer, scene, camera) {
-      if (!self.stereoEyes) {
-        this.visible = false;
-        return;
-      }
-      const cams = renderer.xr && renderer.xr.getCamera && renderer.xr.getCamera().cameras;
-      if (!cams || cams.length < 2) {
-        this.visible = false;
-        return;
-      }
-      this.visible = camera === cams[1];
+      if (!self.stereoEyes) return;
+      this.material.map = self._isRightEye(renderer, camera) ? self.rightTex : self.leftTex;
     };
   }
 
@@ -679,9 +680,10 @@ class StereoVR {
     if (!this.leftMesh) return;
     const stereo = this.stereoEyes;
     this.leftMesh.visible = stereo;
-    this.rightMesh.visible = stereo;
+    this.rightMesh.visible = false;
     this.dualLeft.visible = !stereo;
     this.dualRight.visible = !stereo;
+    if (this.leftMesh.material && this.leftTex) this.leftMesh.material.map = this.leftTex;
   }
 
   _paintHud() {
