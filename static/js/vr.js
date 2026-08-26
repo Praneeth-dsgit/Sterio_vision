@@ -23,21 +23,39 @@ function paintPlaceholder(canvas, label) {
   ctx.fillText("Waiting for camera stream…", 80, 360);
 }
 
-function roundedPlaneGeometry(THREE, width, height, radius, curveSegments) {
-  const w = width * 0.5;
-  const h = height * 0.5;
-  const r = Math.min(Math.max(radius, 0), w, h);
-  const shape = new THREE.Shape();
-  shape.moveTo(-w + r, -h);
-  shape.lineTo(w - r, -h);
-  shape.quadraticCurveTo(w, -h, w, -h + r);
-  shape.lineTo(w, h - r);
-  shape.quadraticCurveTo(w, h, w - r, h);
-  shape.lineTo(-w + r, h);
-  shape.quadraticCurveTo(-w, h, -w, h - r);
-  shape.lineTo(-w, -h + r);
-  shape.quadraticCurveTo(-w, -h, -w + r, -h);
-  return new THREE.ShapeGeometry(shape, curveSegments || 16);
+function roundedCornerAlpha(THREE, width, height, radiusPx) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = Math.max(2, Math.round(512 * (height / Math.max(width, 1e-6))));
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width;
+  const h = canvas.height;
+  const r = Math.min(radiusPx || 48, w / 2, h / 2);
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#ffffff";
+  if (typeof ctx.roundRect === "function") {
+    ctx.beginPath();
+    ctx.roundRect(0, 0, w, h, r);
+    ctx.fill();
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.lineTo(w - r, 0);
+    ctx.quadraticCurveTo(w, 0, w, r);
+    ctx.lineTo(w, h - r);
+    ctx.quadraticCurveTo(w, h, w - r, h);
+    ctx.lineTo(r, h);
+    ctx.quadraticCurveTo(0, h, 0, h - r);
+    ctx.lineTo(0, r);
+    ctx.quadraticCurveTo(0, 0, r, 0);
+    ctx.closePath();
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  return tex;
 }
 
 function copyCanvas(dst, src) {
@@ -228,15 +246,17 @@ class StereoVR {
     this._dist = 2.2;
     this._planeW = 2.2;
     this._planeH = 1.24;
-    this._planeRadius = 0.1;
     this._dropY = -0.25;
-    const geo = roundedPlaneGeometry(THREE, this._planeW, this._planeH, this._planeRadius);
+    const geo = new THREE.PlaneGeometry(this._planeW, this._planeH);
+    this._roundAlpha = roundedCornerAlpha(THREE, this._planeW, this._planeH, 56);
     const matOpts = {
       depthTest: false,
       depthWrite: false,
       side: THREE.DoubleSide,
       toneMapped: false,
       transparent: true,
+      alphaMap: this._roundAlpha,
+      alphaTest: 0.5,
     };
     const leftMat = new THREE.MeshBasicMaterial(Object.assign({ map: this.leftTex }, matOpts));
     const rightMat = new THREE.MeshBasicMaterial(Object.assign({ map: this.rightTex }, matOpts));
@@ -404,12 +424,14 @@ class StereoVR {
     const h = this._planeH * s;
     this.dualLeft.position.set(-(w / 2 + 0.25), 0, -0.05);
     this.dualRight.position.set(w / 2 + 0.25, 0, -0.05);
+    const hudW = 1.1;
     const hudY = -(h / 2 + 0.22);
     this.hud.position.set(0, hudY, 0.04);
-    const btnGap = 0.36;
-    const btnY = hudY;
-    if (this.backMesh) this.backMesh.position.set(-btnGap / 2, btnY, 0.06);
-    if (this.recordMesh) this.recordMesh.position.set(btnGap / 2, btnY, 0.06);
+    const btnR = 0.14;
+    const btnGap = 0.08;
+    const btnX = hudW / 2 + btnR + btnGap;
+    if (this.backMesh) this.backMesh.position.set(-btnX, hudY, 0.06);
+    if (this.recordMesh) this.recordMesh.position.set(btnX, hudY, 0.06);
     if (this._zoomLabel) this._zoomLabel.textContent = `${Math.round(s * 100)}%`;
     this._paintHud();
   }
