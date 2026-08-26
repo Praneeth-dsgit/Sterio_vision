@@ -71,17 +71,30 @@ v4l2-ctl --list-devices
 
 If the wrong `/dev/video*` nodes are selected (many cameras expose extra metadata nodes), pick the real capture indices in the web UI and click **Apply & restart capture**.
 
-Optional systemd service: edit `WorkingDirectory` in `scripts/stereo-vision.service`, then:
+### Start on boot (Quest hotspot)
+
+So the server is already running when the headset connects — no `python -m server` each time:
 
 ```bash
-sudo cp scripts/stereo-vision.service /etc/systemd/system/
-sudo systemctl enable --now stereo-vision
+cd ~/Sterio_vision
+chmod +x scripts/install-service.sh
+./scripts/install-service.sh
 ```
+
+That installs a **systemd** unit, enables it for boot, and starts it now. Logs: `journalctl -u stereo-vision -f`.
+
+**Jetson as Wi‑Fi hotspot:** enable hotspot in Jetson settings (or NetworkManager). Quest joins that network. The Jetson is usually **`10.42.0.1`** on a default shared hotspot — open **`https://10.42.0.1:8443`** in Quest Browser (accept the cert once). If your hotspot uses another subnet, run `hostname -I` on the Jetson and use that IP.
+
+Cameras should stay plugged in before power-on; if a cam is missing at boot, the service still runs (test pattern) and picks up cameras after replug + **Apply & restart capture** in the web UI.
+
+To remove autostart: `sudo systemctl disable --now stereo-vision`.
+
+Manual unit install (edit paths first): see `scripts/stereo-vision.service`.
 
 ## Quest 3
 
-1. Put the headset on the same network as the Jetson (Wi‑Fi or USB‑C Ethernet).
-2. In **Quest Browser**, open the **HTTPS** URL shown on the desktop page, for example `https://192.168.1.40:8443`.
+1. Put the headset on the same network as the Jetson (Wi‑Fi, USB‑C Ethernet, or Jetson hotspot).
+2. In **Quest Browser**, open the **HTTPS** URL shown on the desktop page, for example `https://192.168.1.40:8443` or `https://10.42.0.1:8443` on a Jetson hotspot.
 3. Certificate warning: **Advanced → Proceed** (a self-signed cert is generated on first launch, with your LAN IPs in the SAN).
 4. Tap **Enter VR**.
 5. Pull the trigger to start/stop recording. Files land in `recordings/` on the Jetson and in the **Saved recordings** list.

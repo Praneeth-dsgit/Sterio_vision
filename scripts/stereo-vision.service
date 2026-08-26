@@ -1,13 +1,23 @@
+# Template unit — prefer: ./scripts/install-service.sh
+# That script writes /etc/systemd/system/stereo-vision.service with your repo path and Python.
+#
+# Manual install: edit WorkingDirectory + ExecStart, then:
+#   sudo cp scripts/stereo-vision.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now stereo-vision
+
 [Unit]
 Description=Stereo Vision dual-camera Quest 3 streamer
 After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
+User=nvidia
+Group=nvidia
 WorkingDirectory=/home/nvidia/Sterio_vision
 ExecStart=/usr/bin/python3 -m server
 Restart=on-failure
-RestartSec=3
+RestartSec=5
 Environment=PYTHONUNBUFFERED=1
 
 [Install]
