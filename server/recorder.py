@@ -11,7 +11,7 @@ from typing import Optional
 import cv2
 import numpy as np
 
-from .audio import MicRecorder, resolve_audio_ffmpeg_args
+from .audio import start_mic_capture
 from .config import recordings_dir
 from .ffmpeg_util import find_ffmpeg
 
@@ -111,8 +111,9 @@ class StereoRecorder:
         self._stderr_tail = ""
         self._audio_label: Optional[str] = None
         self._audio_active = False
-        self._mic: Optional[MicRecorder] = None
+        self._mic = None
         self._wav_path: Optional[Path] = None
+        # Inline ffmpeg audio disabled — always sidecar WAV + mux.
         self._ffmpeg_inline_audio = False
 
     @property
@@ -148,22 +149,12 @@ class StereoRecorder:
         self._ffmpeg = find_ffmpeg()
         path = out_dir / f"{stamp}_stereo.mp4"
 
-        audio_args = None
-        if self.audio_enabled:
-            audio_args = resolve_audio_ffmpeg_args(self.audio_device)
-
+        # Video-only ffmpeg (mic is captured separately and muxed on stop).
         if self._ffmpeg:
-            self._proc = self._spawn_ffmpeg(path, stereo_w, stereo_h, self._enc, audio_args)
+            self._proc = self._spawn_ffmpeg(path, stereo_w, stereo_h, self._enc, None)
             if self._proc is None or self._proc.poll() is not None:
                 self._cleanup_proc()
                 self._enc = _soft_encoder()
-                self._proc = self._spawn_ffmpeg(path, stereo_w, stereo_h, self._enc, audio_args)
-            if (self._proc is None or self._proc.poll() is not None) and audio_args is not None:
-                print(f"[record] audio open failed ({self._stderr_tail or 'unknown'}); video only", flush=True)
-                self._cleanup_proc()
-                self._audio_label = None
-                self._audio_active = False
-                self._ffmpeg_inline_audio = False
                 self._proc = self._spawn_ffmpeg(path, stereo_w, stereo_h, self._enc, None)
 
         if self._proc is None or self._proc.poll() is not None:
@@ -178,21 +169,18 @@ class StereoRecorder:
                 )
             self._audio_active = False
             self._audio_label = None
-            self._ffmpeg_inline_audio = False
 
-        # Windows (and Linux fallback): capture mic to WAV via PortAudio, mux on stop.
-        if self.audio_enabled and not self._ffmpeg_inline_audio:
+        if self.audio_enabled:
             wav_path = path.with_suffix(".wav")
-            mic = MicRecorder(device=self.audio_device)
-            if mic.start(wav_path):
+            mic = start_mic_capture(self.audio_device, wav_path)
+            if mic is not None:
                 self._mic = mic
                 self._wav_path = wav_path
                 self._audio_active = True
                 self._audio_label = mic.label
             else:
-                print(f"[record] mic capture failed: {mic.error}", flush=True)
-                if not self._audio_active:
-                    self._audio_label = mic.error or "mic unavailable"
+                self._audio_active = False
+                self._audio_label = "mic unavailable — check: arecord -l"
 
         self._active_path = path
         self._started_at = time.time()
@@ -247,32 +235,12 @@ class StereoRecorder:
 
         cmd.extend(enc)
         cmd.extend(["-pix_fmt", "yuv420p"])
-        if have_audio:
-            # -shortest: closing the video pipe ends the file (mic stays open otherwise).
-            cmd.extend(
-                [
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "128k",
-                    "-ac",
-                    "1",
-                    "-ar",
-                    "44100",
-                    "-af",
-                    "aresample=async=1:first_pts=0",
-                    "-shortest",
-                ]
-            )
-            self._audio_active = True
-        else:
-            cmd.append("-an")
-            self._audio_active = False
+        # Always write video-only here; mic is muxed from WAV on stop.
+        cmd.append("-an")
+        self._audio_active = False
+        self._ffmpeg_inline_audio = False
+        if not have_audio:
             self._audio_label = None
-            self._ffmpeg_inline_audio = False
-
-        if have_audio:
-            self._ffmpeg_inline_audio = True
 
         cmd.extend(
             [
