@@ -170,7 +170,9 @@ async function toggleRecord() {
   if (status.record?.recording) await api("/api/record/stop", { method: "POST", body: "{}" });
   else await api("/api/record/start", { method: "POST", body: "{}" });
   renderStatus(await api("/api/status"));
-  refreshRecordings();
+  // Avoid refreshing the 2D recordings dropdown while in VR — Quest Browser
+  // can flash that HTML panel into the headset next to the video plane.
+  if (!vr.active) refreshRecordings();
 }
 
 async function toggleMute() {
@@ -224,7 +226,9 @@ setInterval(async () => {
   try {
     const data = await api("/api/status");
     renderStatus(data);
-    if (data.record?.recording) await refreshRecordings();
+    if (data.record?.recording && !vr.active) await refreshRecordings();
   } catch (_) {}
 }, 2000);
-setInterval(() => refreshRecordings().catch(() => {}), 8000);
+setInterval(() => {
+  if (!vr.active) refreshRecordings().catch(() => {});
+}, 8000);

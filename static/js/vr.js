@@ -255,6 +255,8 @@ class StereoVR {
 
     this.root.classList.add("active");
     this.active = true;
+    const appEl = document.getElementById("app");
+    if (appEl) appEl.setAttribute("hidden", "");
     const THREE = window.THREE;
     const canvas = document.createElement("canvas");
     canvas.style.display = "block";
@@ -445,6 +447,8 @@ class StereoVR {
     this._exiting = true;
     this.active = false;
     this.root.classList.remove("active");
+    const appEl = document.getElementById("app");
+    if (appEl) appEl.removeAttribute("hidden");
     this._unbindOverlayControls();
     if (this.unsub) {
       this.unsub();
