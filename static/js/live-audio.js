@@ -5,7 +5,7 @@ function audioWsUrl() {
 
 class LiveAudioPlayer {
   constructor() {
-    this.ws = None;
+    this.ws = null;
     this.ctx = null;
     this.nextTime = 0;
     this.rate = 24000;
