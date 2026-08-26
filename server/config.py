@@ -34,7 +34,7 @@ DEFAULTS: dict[str, Any] = {
         "https": True,
     },
     "record": {
-        "auto_start": True,
+        "auto_start": False,
         "directory": "recordings",
         "segment_minutes": 5,
         "stereo_layout": "sbs",

@@ -230,21 +230,28 @@ class StereoEngine:
             self.stats["skew_ms"] = round(paired.skew_ms, 2)
             self.stats["synthetic"] = paired.left.synthetic or paired.right.synthetic
 
+            # Publish live preview before disk work so VR stays responsive.
+            left_jpeg = encode_jpeg(paired.left.image, quality, max_width)
+            right_jpeg = encode_jpeg(paired.right.image, quality, max_width)
+            packet = pack_pair(left_jpeg, right_jpeg, paired.left, paired.right, paired.skew_ms)
+            with self._preview_lock:
+                self._preview = packet
+                self._left_jpeg = left_jpeg
+                self._right_jpeg = right_jpeg
+
             if self.recorder.recording:
                 self.recorder.maybe_rotate(width, height)
                 ts = (paired.left.timestamp + paired.right.timestamp) * 0.5
                 self.recorder.write(paired.left.image, paired.right.image, timestamp=ts)
 
-            left_jpeg = encode_jpeg(paired.left.image, quality, max_width)
-            right_jpeg = encode_jpeg(paired.right.image, quality, max_width)
-            packet = pack_pair(left_jpeg, right_jpeg, paired.left, paired.right, paired.skew_ms)
-            stereo = stack_stereo(paired.left.image, paired.right.image, self.cfg["record"]["stereo_layout"])
-            stereo_jpeg = encode_jpeg(stereo, quality, max_width * 2)
-            with self._preview_lock:
-                self._preview = packet
-                self._left_jpeg = left_jpeg
-                self._right_jpeg = right_jpeg
-                self._mjpeg_stereo = stereo_jpeg
+            # Side-by-side MJPEG is heavier — refresh every other frame.
+            if self._fps_count % 2 == 0:
+                stereo = stack_stereo(
+                    paired.left.image, paired.right.image, self.cfg["record"]["stereo_layout"]
+                )
+                stereo_jpeg = encode_jpeg(stereo, quality, max_width * 2)
+                with self._preview_lock:
+                    self._mjpeg_stereo = stereo_jpeg
 
             self._fps_count += 1
             now = time.time()

@@ -44,8 +44,7 @@ body { background-image: radial-gradient(1200px 500px at 10% -10%, #152038 0%, t
   font-weight: 800;
 }
 h1 { margin: 0; font-size: 20px; }
-.brand p, .hint { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
-#vr-hint { flex-shrink: 0; }
+.brand p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
 
 .toolbar { display: flex; gap: 10px; flex: 1; justify-content: center; flex-wrap: wrap; align-items: center; }
 .btn {

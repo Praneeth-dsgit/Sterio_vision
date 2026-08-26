@@ -32,7 +32,7 @@ server:
 
 record:
   # Start writing to disk as soon as cameras are live
-  auto_start: true
+  auto_start: false
   directory: recordings
   # New file every N minutes (0 = one file until Stop)
   segment_minutes: 5

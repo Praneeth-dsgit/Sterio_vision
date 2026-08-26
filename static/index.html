@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Stereo Vision</title>
-  <link rel="stylesheet" href="/static/css/app.css?v=headlock8" />
+  <link rel="stylesheet" href="/static/css/app.css?v=ui-round1" />
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
 </head>
 <body>
@@ -19,9 +19,9 @@
       </div>
 
       <div class="toolbar">
-        <button id="btn-vr" class="btn primary">Enter VR</button>
-        <button id="btn-record" class="btn danger">Start recording</button>
-        <button id="btn-swap" class="btn">Swap eyes</button>
+        <button id="btn-vr" class="btn primary">VR Mode</button>
+        <button id="btn-record" class="btn danger">Record</button>
+        <button id="btn-swap" class="btn">Swap Cameras</button>
         <div class="recordings-menu">
           <button id="btn-recordings" class="btn" type="button">Saved recordings ▾</button>
           <div id="recordings-panel" class="recordings-panel" hidden>
@@ -35,8 +35,6 @@
         <span id="pill-rec" class="pill">Idle</span>
       </div>
     </header>
-
-    <p class="hint" id="vr-hint">Quest 3: open this page over HTTPS, then tap Enter VR.</p>
 
     <section class="stage">
       <div class="eye-card">
@@ -53,11 +51,11 @@
 
   <div id="vr-root"></div>
 
-  <script src="/static/js/xr-shim.js?v=headlock8"></script>
+  <script src="/static/js/xr-shim.js?v=ui-round1"></script>
   <script src="/static/vendor/three.min.js"></script>
-  <script src="/static/js/protocol.js?v=headlock8"></script>
-  <script src="/static/js/stream.js?v=headlock8"></script>
-  <script src="/static/js/vr.js?v=headlock8"></script>
-  <script src="/static/js/app.js?v=headlock8"></script>
+  <script src="/static/js/protocol.js?v=ui-round1"></script>
+  <script src="/static/js/stream.js?v=ui-round1"></script>
+  <script src="/static/js/vr.js?v=ui-round1"></script>
+  <script src="/static/js/app.js?v=ui-round1"></script>
 </body>
 </html>

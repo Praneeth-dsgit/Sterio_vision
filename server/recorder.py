@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import queue
 import shutil
 import subprocess
 import threading
@@ -48,6 +49,8 @@ def stack_stereo(left: np.ndarray, right: np.ndarray, layout: str = "sbs") -> np
 
 
 class StereoRecorder:
+    """Disk writer runs on a worker thread so the live preview loop is not blocked."""
+
     def __init__(self, fps: int, layout: str = "sbs", segment_minutes: int = 5):
         self.fps = max(int(fps), 1)
         self.layout = layout
@@ -62,6 +65,9 @@ class StereoRecorder:
         self._ffmpeg = find_ffmpeg()
         self._fallback_writer: Optional[cv2.VideoWriter] = None
         self.error: Optional[str] = None
+        self._q: queue.Queue = queue.Queue(maxsize=2)
+        self._worker: Optional[threading.Thread] = None
+        self._worker_stop = threading.Event()
 
     @property
     def recording(self) -> bool:
@@ -123,6 +129,10 @@ class StereoRecorder:
         self._pace_origin = 0.0
         self._frames = 0
         self.error = None
+        self._worker_stop.clear()
+        self._drain_queue()
+        self._worker = threading.Thread(target=self._worker_loop, name="stereo-recorder", daemon=True)
+        self._worker.start()
         return path
 
     def maybe_rotate(self, width: int, height: int) -> Optional[Path]:
@@ -133,11 +143,34 @@ class StereoRecorder:
         return self.start(width, height)
 
     def write(self, left: np.ndarray, right: np.ndarray, timestamp: Optional[float] = None) -> None:
+        """Enqueue a frame copy; does not block the preview loop on ffmpeg."""
         if not self.recording:
             return
+        now = timestamp if timestamp is not None else time.time()
+        item = (left.copy(), right.copy(), now)
+        try:
+            self._q.put_nowait(item)
+        except queue.Full:
+            try:
+                self._q.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._q.put_nowait(item)
+            except queue.Full:
+                pass
+
+    def _worker_loop(self) -> None:
+        while not self._worker_stop.is_set():
+            try:
+                left, right, now = self._q.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            self._write_blocking(left, right, now)
+
+    def _write_blocking(self, left: np.ndarray, right: np.ndarray, now: float) -> None:
         stereo = stack_stereo(left, right, self.layout)
         payload = stereo.tobytes()
-        now = timestamp if timestamp is not None else time.time()
         with self._lock:
             repeats = self._cfr_repeats(now)
             if repeats <= 0:
@@ -159,7 +192,6 @@ class StereoRecorder:
                     return
 
     def _cfr_repeats(self, now: float) -> int:
-        """Keep file duration equal to real time when capture is slower than fps."""
         if self._frames == 0 or self._pace_origin <= 0:
             self._pace_origin = now
             return 1
@@ -172,6 +204,11 @@ class StereoRecorder:
 
     def stop(self) -> Optional[Path]:
         path = self._active_path
+        self._worker_stop.set()
+        if self._worker and self._worker.is_alive():
+            self._worker.join(timeout=2)
+        self._worker = None
+        self._drain_queue()
         with self._lock:
             self._cleanup_proc()
             if self._fallback_writer is not None:
@@ -179,6 +216,13 @@ class StereoRecorder:
                 self._fallback_writer = None
         self._active_path = None
         return path
+
+    def _drain_queue(self) -> None:
+        while True:
+            try:
+                self._q.get_nowait()
+            except queue.Empty:
+                break
 
     def _cleanup_proc(self) -> None:
         if self._proc is None:

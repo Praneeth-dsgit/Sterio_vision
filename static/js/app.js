@@ -11,15 +11,12 @@ function applyEyeLabels() {
   const swapped = stream.swapEyes;
   const leftIdx = swapped ? lastCams.rightIndex : lastCams.leftIndex;
   const rightIdx = swapped ? lastCams.leftIndex : lastCams.rightIndex;
-  const vfov = lensVerticalFov(lensHfov, capW, capH);
   document.getElementById("left-eye-tag").textContent = swapped ? "RIGHT" : "LEFT";
   document.getElementById("right-eye-tag").textContent = swapped ? "LEFT" : "RIGHT";
-  document.getElementById("left-cam-label").textContent =
-    `cam ${leftIdx} · ${lensHfov.toFixed(0)}°×${vfov.toFixed(0)}°`;
-  document.getElementById("right-cam-label").textContent =
-    `cam ${rightIdx} · ${lensHfov.toFixed(0)}°×${vfov.toFixed(0)}°`;
+  document.getElementById("left-cam-label").textContent = `cam ${leftIdx}`;
+  document.getElementById("right-cam-label").textContent = `cam ${rightIdx}`;
   document.getElementById("btn-swap").classList.toggle("on", swapped);
-  document.getElementById("btn-swap").textContent = swapped ? "Swap eyes (on)" : "Swap eyes";
+  document.getElementById("btn-swap").textContent = swapped ? "Swap Cameras (on)" : "Swap Cameras";
 }
 
 function drawPreview(canvas, bitmap) {
@@ -79,22 +76,12 @@ function renderStatus(data) {
   setPill("pill-rec", rec.recording ? "REC" : "Idle", rec.recording ? "live" : "");
 
   const btn = document.getElementById("btn-record");
-  btn.textContent = rec.recording ? "Stop recording" : "Start recording";
+  btn.textContent = rec.recording ? "Stop" : "Record";
   btn.classList.toggle("live", !!rec.recording);
   vr.setRecording(!!rec.recording);
 
   if (data.synthetic) {
     document.getElementById("overlay-msg").textContent = "Test pattern — plug in USB cameras on the Jetson";
-  }
-
-  const httpsUrl =
-    (data.urls || []).find((u) => u.https && !String(u.ip).startsWith("127.")) ||
-    (data.urls || []).find((u) => u.https);
-  if (!location.protocol.startsWith("https")) {
-    document.getElementById("vr-hint").textContent =
-      "WebXR needs HTTPS. On Quest 3 open " +
-      (httpsUrl ? httpsUrl.https : "the HTTPS URL") +
-      " and accept the certificate warning.";
   }
 }
 
@@ -140,7 +127,6 @@ document.getElementById("btn-vr").addEventListener("click", async () => {
   try {
     await vr.enter();
   } catch (err) {
-    document.getElementById("vr-hint").textContent = String(err.message || err);
     alert(err.message || err);
   }
 });

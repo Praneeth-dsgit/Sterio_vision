@@ -64,21 +64,6 @@ function drawStreamGrid(ctx, x, y, w, h, hfovDeg) {
   ctx.moveTo(cx, cy - mark * 1.6);
   ctx.lineTo(cx, cy + mark * 1.6);
   ctx.stroke();
-
-  const label = `Lens ${hfov.toFixed(0)}° H × ${vfov.toFixed(0)}° V`;
-  ctx.font = `700 ${Math.max(13, Math.round(w / 38))}px sans-serif`;
-  const padX = 10;
-  const padY = 7;
-  const textW = ctx.measureText(label).width;
-  const boxH = Math.max(22, Math.round(w / 28));
-  const bx = x + 10;
-  const by = y + h - boxH - 12;
-  ctx.fillStyle = "rgba(8, 12, 20, 0.72)";
-  ctx.fillRect(bx, by, textW + padX * 2, boxH);
-  ctx.fillStyle = "#3de0ff";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  ctx.fillText(label, bx + padX, by + boxH / 2);
   ctx.restore();
 }
 

@@ -23,6 +23,23 @@ function paintPlaceholder(canvas, label) {
   ctx.fillText("Waiting for camera stream…", 80, 360);
 }
 
+function roundedPlaneGeometry(THREE, width, height, radius, curveSegments) {
+  const w = width * 0.5;
+  const h = height * 0.5;
+  const r = Math.min(Math.max(radius, 0), w, h);
+  const shape = new THREE.Shape();
+  shape.moveTo(-w + r, -h);
+  shape.lineTo(w - r, -h);
+  shape.quadraticCurveTo(w, -h, w, -h + r);
+  shape.lineTo(w, h - r);
+  shape.quadraticCurveTo(w, h, w - r, h);
+  shape.lineTo(-w + r, h);
+  shape.quadraticCurveTo(-w, h, -w, h - r);
+  shape.lineTo(-w, -h + r);
+  shape.quadraticCurveTo(-w, -h, -w + r, -h);
+  return new THREE.ShapeGeometry(shape, curveSegments || 16);
+}
+
 function copyCanvas(dst, src) {
   if (!dst || !src || src.width < 320) return false;
   if (dst.width !== src.width) dst.width = src.width;
@@ -31,36 +48,75 @@ function copyCanvas(dst, src) {
   return true;
 }
 
-function makeBackMesh(THREE) {
+function makeCircleButton(THREE, label, fill, stroke) {
+  const size = 256;
   const canvas = document.createElement("canvas");
-  canvas.width = 512;
-  canvas.height = 192;
+  canvas.width = size;
+  canvas.height = size;
   const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "rgba(8,12,20,0.92)";
-  if (typeof ctx.roundRect === "function") {
-    ctx.roundRect(16, 16, 480, 160, 36);
-    ctx.fill();
-  } else {
-    ctx.fillRect(16, 16, 480, 160);
-  }
-  ctx.fillStyle = "#3de0ff";
-  ctx.font = "700 92px sans-serif";
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = size * 0.42;
+  ctx.clearRect(0, 0, size, size);
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = fill || "rgba(8,12,20,0.92)";
+  ctx.fill();
+  ctx.lineWidth = size * 0.04;
+  ctx.strokeStyle = stroke || "#3de0ff";
+  ctx.stroke();
+  ctx.fillStyle = stroke || "#3de0ff";
+  ctx.font = `700 ${Math.round(size * 0.22)}px sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("←  BACK", 256, 100);
+  ctx.fillText(label, cx, cy + 2);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
   const mesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.48, 0.18),
+    new THREE.CircleGeometry(0.14, 48),
     new THREE.MeshBasicMaterial({
-      map: new THREE.CanvasTexture(canvas),
+      map: tex,
       transparent: true,
       depthTest: false,
       toneMapped: false,
+      side: THREE.DoubleSide,
     })
   );
   mesh.frustumCulled = false;
   mesh.renderOrder = 3;
-  mesh.name = "vr-back-3d";
+  mesh.userData.btnCanvas = canvas;
+  mesh.userData.btnTex = tex;
   return mesh;
+}
+
+function paintRecordButton(mesh, recording) {
+  if (!mesh || !mesh.userData.btnCanvas) return;
+  const canvas = mesh.userData.btnCanvas;
+  const ctx = canvas.getContext("2d");
+  const size = canvas.width;
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = size * 0.42;
+  const stroke = recording ? "#ff3b5c" : "#3de0ff";
+  ctx.clearRect(0, 0, size, size);
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(8,12,20,0.92)";
+  ctx.fill();
+  ctx.lineWidth = size * 0.04;
+  ctx.strokeStyle = stroke;
+  ctx.stroke();
+  if (recording) {
+    const sq = size * 0.18;
+    ctx.fillStyle = "#ff3b5c";
+    ctx.fillRect(cx - sq / 2, cy - sq / 2, sq, sq);
+  } else {
+    ctx.beginPath();
+    ctx.arc(cx, cy, size * 0.14, 0, Math.PI * 2);
+    ctx.fillStyle = "#ff3b5c";
+    ctx.fill();
+  }
+  mesh.userData.btnTex.needsUpdate = true;
 }
 
 function makeControllerPointer(THREE) {
@@ -118,6 +174,7 @@ class StereoVR {
 
   setRecording(on) {
     this.recording = on;
+    paintRecordButton(this.recordMesh, on);
     this._paintHud();
   }
 
@@ -171,9 +228,16 @@ class StereoVR {
     this._dist = 2.2;
     this._planeW = 2.2;
     this._planeH = 1.24;
+    this._planeRadius = 0.1;
     this._dropY = -0.25;
-    const geo = new THREE.PlaneGeometry(this._planeW, this._planeH);
-    const matOpts = { depthTest: false, depthWrite: false, side: THREE.DoubleSide, toneMapped: false };
+    const geo = roundedPlaneGeometry(THREE, this._planeW, this._planeH, this._planeRadius);
+    const matOpts = {
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+      transparent: true,
+    };
     const leftMat = new THREE.MeshBasicMaterial(Object.assign({ map: this.leftTex }, matOpts));
     const rightMat = new THREE.MeshBasicMaterial(Object.assign({ map: this.rightTex }, matOpts));
 
@@ -213,9 +277,15 @@ class StereoVR {
     this.hud.renderOrder = 2;
     this.screen.add(this.hud);
 
-    this.backMesh = makeBackMesh(THREE);
+    this.backMesh = makeCircleButton(THREE, "←", "rgba(8,12,20,0.92)", "#3de0ff");
+    this.backMesh.name = "vr-back-3d";
     this.screen.add(this.backMesh);
+    this.recordMesh = makeCircleButton(THREE, "●", "rgba(8,12,20,0.92)", "#3de0ff");
+    this.recordMesh.name = "vr-record-3d";
+    paintRecordButton(this.recordMesh, this.recording);
+    this.screen.add(this.recordMesh);
     this._raycaster = new THREE.Raycaster();
+    this._uiTargets = [this.backMesh, this.recordMesh];
 
     this._worldPos = new THREE.Vector3();
     this._worldQuat = new THREE.Quaternion();
@@ -334,15 +404,12 @@ class StereoVR {
     const h = this._planeH * s;
     this.dualLeft.position.set(-(w / 2 + 0.25), 0, -0.05);
     this.dualRight.position.set(w / 2 + 0.25, 0, -0.05);
-    const hudW = 1.1;
-    const hudH = 0.28;
     const hudY = -(h / 2 + 0.22);
     this.hud.position.set(0, hudY, 0.04);
-    if (this.backMesh) {
-      const backW = 0.48;
-      const backH = 0.18;
-      this.backMesh.position.set(-(hudW / 2 + backW / 2 + 0.06), hudY - hudH / 2 + backH / 2, 0.05);
-    }
+    const btnGap = 0.36;
+    const btnY = hudY;
+    if (this.backMesh) this.backMesh.position.set(-btnGap / 2, btnY, 0.06);
+    if (this.recordMesh) this.recordMesh.position.set(btnGap / 2, btnY, 0.06);
     if (this._zoomLabel) this._zoomLabel.textContent = `${Math.round(s * 100)}%`;
     this._paintHud();
   }
@@ -410,10 +477,16 @@ class StereoVR {
     return this.rig || this.camera;
   }
 
+  _uiMeshes() {
+    return (this._uiTargets || []).filter(Boolean);
+  }
+
   _updatePointers() {
     if (!this._controllers) return;
     const fallback = 1.5;
-    let hovering = false;
+    const targets = this._uiMeshes();
+    let hoverBack = false;
+    let hoverRec = false;
     for (let i = 0; i < this._controllers.length; i++) {
       const ctrl = this._controllers[i];
       const ptr = ctrl.userData.pointer;
@@ -429,11 +502,13 @@ class StereoVR {
           this._forward.set(0, 0, -1).applyQuaternion(ctrl.quaternion);
           this._raycaster.set(this._tmp, this._forward);
         }
-        const hits = this.backMesh ? this._raycaster.intersectObject(this.backMesh, false) : [];
+        const hits = targets.length ? this._raycaster.intersectObjects(targets, false) : [];
         if (hits.length) {
           dist = hits[0].distance;
           hit = true;
-          hovering = true;
+          const name = hits[0].object.name;
+          if (name === "vr-back-3d") hoverBack = true;
+          if (name === "vr-record-3d") hoverRec = true;
         }
       } catch (err) {
         /* ignore */
@@ -445,29 +520,34 @@ class StereoVR {
       beam.material.color.setHex(hit ? 0xff3b5c : 0x88f0ff);
       dot.material.color.setHex(hit ? 0xff3b5c : 0x3de0ff);
     }
-    if (this.backMesh) this.backMesh.scale.setScalar(hovering ? 1.12 : 1);
+    if (this.backMesh) this.backMesh.scale.setScalar(hoverBack ? 1.15 : 1);
+    if (this.recordMesh) this.recordMesh.scale.setScalar(hoverRec ? 1.15 : 1);
   }
 
   _onSelect(ctrl) {
     if (this._grabbing) return;
-    if (this.backMesh && this._raycaster) {
-      try {
-        if (this._raycaster.setFromXRController) this._raycaster.setFromXRController(ctrl);
-        else {
-          ctrl.getWorldPosition(this._tmp);
-          this._forward.set(0, 0, -1).applyQuaternion(ctrl.quaternion);
-          this._raycaster.set(this._tmp, this._forward);
-        }
-        const hits = this._raycaster.intersectObject(this.backMesh, false);
-        if (hits.length) {
-          this.exit();
-          return;
-        }
-      } catch (err) {
-        /* ignore raycast errors in emulator */
+    const targets = this._uiMeshes();
+    if (!targets.length || !this._raycaster) return;
+    try {
+      if (this._raycaster.setFromXRController) this._raycaster.setFromXRController(ctrl);
+      else {
+        ctrl.getWorldPosition(this._tmp);
+        this._forward.set(0, 0, -1).applyQuaternion(ctrl.quaternion);
+        this._raycaster.set(this._tmp, this._forward);
       }
+      const hits = this._raycaster.intersectObjects(targets, false);
+      if (!hits.length) return;
+      const name = hits[0].object.name;
+      if (name === "vr-back-3d") {
+        this.exit();
+        return;
+      }
+      if (name === "vr-record-3d" && this.onToggleRecord) {
+        this.onToggleRecord();
+      }
+    } catch (err) {
+      /* ignore raycast errors in emulator */
     }
-    if (this.onToggleRecord) this.onToggleRecord();
   }
 
   _beginGrab(ctrl) {
@@ -699,7 +779,7 @@ class StereoVR {
     }
     ctx.fillStyle = this.recording ? "#ff3b5c" : "#3de0ff";
     ctx.font = "700 42px sans-serif";
-    ctx.fillText(this.recording ? "RECORDING  ·  trigger to stop" : "Aim at BACK  ·  trigger: record", 48, 110);
+    ctx.fillText(this.recording ? "RECORDING  ·  aim ● to stop" : "Aim ● to record  ·  ← to exit", 48, 110);
     ctx.fillStyle = "#c5d0e8";
     ctx.font = "600 40px sans-serif";
     ctx.fillText(`Zoom ${Math.round((this.zoom || 1) * 100)}%  ·  stick / drag / arrows`, 56, 180);
