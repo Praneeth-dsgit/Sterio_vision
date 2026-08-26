@@ -14,6 +14,7 @@ import numpy as np
 from .audio import start_mic_capture
 from .config import recordings_dir
 from .ffmpeg_util import find_ffmpeg
+from .live_audio import LiveAudioHub
 
 
 def _soft_encoder() -> list[str]:
@@ -79,6 +80,7 @@ class StereoRecorder:
         scale: float = 1.0,
         audio: bool = True,
         audio_device: str = "auto",
+        audio_hub: Optional[LiveAudioHub] = None,
     ):
         self.fps = max(int(fps), 1)
         self.layout = layout
@@ -88,6 +90,7 @@ class StereoRecorder:
             self.scale = 1.0
         self.audio_enabled = bool(audio)
         self.audio_device = audio_device or "auto"
+        self.audio_hub = audio_hub
         self._proc: Optional[subprocess.Popen] = None
         self._lock = threading.Lock()
         self._active_path: Optional[Path] = None
@@ -172,15 +175,27 @@ class StereoRecorder:
 
         if self.audio_enabled:
             wav_path = path.with_suffix(".wav")
-            mic = start_mic_capture(self.audio_device, wav_path)
-            if mic is not None:
-                self._mic = mic
-                self._wav_path = wav_path
-                self._audio_active = True
-                self._audio_label = mic.label
-            else:
-                self._audio_active = False
-                self._audio_label = "mic unavailable — check: arecord -l"
+            # Prefer shared live hub so the USB mic is not opened twice.
+            if self.audio_hub is not None:
+                self.audio_hub.configure(device=self.audio_device, enabled=True)
+                if self.audio_hub.start_wav(wav_path):
+                    self._mic = None
+                    self._wav_path = wav_path
+                    self._audio_active = True
+                    self._audio_label = self.audio_hub.label or "live-hub"
+                else:
+                    self._audio_active = False
+                    self._audio_label = self.audio_hub.error or "mic unavailable"
+            if not self._audio_active:
+                mic = start_mic_capture(self.audio_device, wav_path)
+                if mic is not None:
+                    self._mic = mic
+                    self._wav_path = wav_path
+                    self._audio_active = True
+                    self._audio_label = mic.label
+                else:
+                    self._audio_active = False
+                    self._audio_label = "mic unavailable — check: arecord -l"
 
         self._active_path = path
         self._started_at = time.time()
@@ -362,9 +377,13 @@ class StereoRecorder:
             self._worker.join(timeout=12)
         self._worker = None
         wav_path = None
+        used_hub = self.audio_hub is not None and self._mic is None and self._wav_path is not None
         if self._mic is not None:
             wav_path = self._mic.stop()
             self._mic = None
+        elif used_hub:
+            wav_path = self.audio_hub.stop_wav()
+        self._wav_path = None
         with self._lock:
             self._cleanup_proc()
             if self._fallback_writer is not None:

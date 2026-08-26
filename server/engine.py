@@ -10,6 +10,7 @@ import numpy as np
 
 from .cameras import CameraWorker, Frame, list_cameras, resolve_camera_indices
 from .config import load_config, save_local_config
+from .live_audio import LiveAudioHub
 from .recorder import StereoRecorder, stack_stereo
 from .sync import pair_frames
 
@@ -47,6 +48,10 @@ class StereoEngine:
         self.cfg = load_config()
         self.left: Optional[CameraWorker] = None
         self.right: Optional[CameraWorker] = None
+        self.audio_hub = LiveAudioHub(
+            device=str(self.cfg["record"].get("audio_device", "auto")),
+            enabled=bool(self.cfg["record"].get("audio", True)),
+        )
         self.recorder = StereoRecorder(
             fps=int(self.cfg["cameras"]["fps"]),
             layout=self.cfg["record"]["stereo_layout"],
@@ -54,6 +59,7 @@ class StereoEngine:
             scale=float(self.cfg["record"].get("scale", 1.0)),
             audio=bool(self.cfg["record"].get("audio", True)),
             audio_device=str(self.cfg["record"].get("audio_device", "auto")),
+            audio_hub=self.audio_hub,
         )
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -76,6 +82,17 @@ class StereoEngine:
         self._fps_t = time.time()
         self._available_cameras: list[dict] = []
         self._last_rebind = 0.0
+
+    def _make_recorder(self, cam: dict) -> StereoRecorder:
+        return StereoRecorder(
+            fps=int(cam["fps"]),
+            layout=self.cfg["record"]["stereo_layout"],
+            segment_minutes=int(self.cfg["record"]["segment_minutes"]),
+            scale=float(self.cfg["record"].get("scale", 1.0)),
+            audio=bool(self.cfg["record"].get("audio", True)),
+            audio_device=str(self.cfg["record"].get("audio_device", "auto")),
+            audio_hub=self.audio_hub,
+        )
 
     def start(self) -> None:
         self.stop()
@@ -109,14 +126,11 @@ class StereoEngine:
         )
         self.left.start()
         self.right.start()
-        self.recorder = StereoRecorder(
-            fps=int(cam["fps"]),
-            layout=self.cfg["record"]["stereo_layout"],
-            segment_minutes=int(self.cfg["record"]["segment_minutes"]),
-            scale=float(self.cfg["record"].get("scale", 1.0)),
-            audio=bool(self.cfg["record"].get("audio", True)),
-            audio_device=str(self.cfg["record"].get("audio_device", "auto")),
+        self.audio_hub.configure(
+            device=str(self.cfg["record"].get("audio_device", "auto")),
+            enabled=bool(self.cfg["record"].get("audio", True)),
         )
+        self.recorder = self._make_recorder(cam)
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="stereo-engine", daemon=True)
         self._thread.start()
@@ -204,6 +218,10 @@ class StereoEngine:
         self.recorder.scale = float(cfg["record"].get("scale", 1.0))
         self.recorder.audio_enabled = bool(cfg["record"].get("audio", True))
         self.recorder.audio_device = str(cfg["record"].get("audio_device", "auto"))
+        self.audio_hub.configure(
+            device=self.recorder.audio_device,
+            enabled=self.recorder.audio_enabled,
+        )
         if restart:
             self.start()
         elif cfg["record"]["auto_start"] and not self.recorder.recording:
@@ -250,6 +268,7 @@ class StereoEngine:
             },
             "stream": self.stats,
             "record": self.recorder.snapshot(),
+            "live_audio": self.audio_hub.snapshot(),
             "config": self.cfg,
             "synthetic": synthetic,
         }
@@ -285,12 +304,13 @@ class StereoEngine:
                 self.recorder.maybe_rotate(width, height)
                 self.recorder.write(paired.left.image, paired.right.image)
 
-            # While recording, skip/lighten JPEG so H.264 encode does not drop frames.
+            # While recording, lighten JPEG encode but keep full width so Quest
+            # CanvasTextures don't resize and nest the frame in a corner.
             clients = int(self.stats.get("clients") or 0)
             if recording:
-                do_preview = clients > 0 and (self._fps_count % 4 == 0)
-                preview_quality = 40
-                preview_width = min(max_width, 640) if max_width else 640
+                do_preview = clients > 0 and (self._fps_count % 3 == 0)
+                preview_quality = 50
+                preview_width = max_width
             else:
                 do_preview = True
                 preview_quality = quality

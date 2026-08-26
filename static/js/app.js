@@ -1,5 +1,6 @@
 const stream = new StereoStream();
 const vr = new StereoVR(stream);
+const liveAudio = new LiveAudioPlayer();
 const leftCanvas = document.getElementById("left-canvas");
 const rightCanvas = document.getElementById("right-canvas");
 let lensHfov = 70;
@@ -80,15 +81,17 @@ function renderStatus(data) {
   const cfgAudio = data.config?.record?.audio;
   if (typeof cfgAudio === "boolean") audioEnabled = cfgAudio;
   else if (typeof rec.audio === "boolean" && !rec.recording) audioEnabled = !!rec.audio;
-  const micLive = rec.recording ? !!rec.audio : audioEnabled;
-  setPill("pill-mic", micLive ? "Mic" : "Muted", micLive ? "ok" : "muted");
+  const live = data.live_audio || {};
+  const micLive = audioEnabled && (live.live_audio || !!rec.audio || live.enabled !== false);
+  setPill("pill-mic", audioEnabled ? (live.live_audio || liveAudio.connected ? "Mic Live" : "Mic") : "Muted", audioEnabled ? "ok" : "muted");
+  liveAudio.setMuted(!audioEnabled);
   const muteBtn = document.getElementById("btn-mute");
   if (muteBtn) {
     muteBtn.textContent = audioEnabled ? "Mute" : "Unmute";
     muteBtn.classList.toggle("muted", !audioEnabled);
     muteBtn.title = audioEnabled
-      ? "Mute microphone for recordings"
-      : "Unmute microphone for recordings";
+      ? "Mute live mic + recordings"
+      : "Unmute live mic + recordings";
   }
 
   const btn = document.getElementById("btn-record");
@@ -182,7 +185,13 @@ async function toggleMute() {
     body: JSON.stringify({ record: { audio: next } }),
   });
   audioEnabled = next;
+  liveAudio.setMuted(!next);
+  if (next) await liveAudio.resume();
   renderStatus(await api("/api/status"));
+}
+
+function unlockAudio() {
+  liveAudio.resume().catch(() => {});
 }
 
 stream.onFrame((frame) => {
@@ -193,8 +202,12 @@ stream.onFrame((frame) => {
 
 vr.onToggleRecord = toggleRecord;
 
-document.getElementById("btn-record").addEventListener("click", toggleRecord);
+document.getElementById("btn-record").addEventListener("click", () => {
+  unlockAudio();
+  toggleRecord();
+});
 document.getElementById("btn-mute").addEventListener("click", () => {
+  unlockAudio();
   toggleMute().catch((err) => alert(err.message || err));
 });
 document.getElementById("btn-swap").addEventListener("click", () => {
@@ -203,6 +216,7 @@ document.getElementById("btn-swap").addEventListener("click", () => {
 });
 document.getElementById("btn-vr").addEventListener("click", async () => {
   try {
+    await liveAudio.resume();
     await vr.enter();
   } catch (err) {
     alert(err.message || err);
@@ -213,13 +227,16 @@ const recBtn = document.getElementById("btn-recordings");
 const recPanel = document.getElementById("recordings-panel");
 recBtn.addEventListener("click", (event) => {
   event.stopPropagation();
+  unlockAudio();
   recPanel.hidden = !recPanel.hidden;
 });
 document.addEventListener("click", (event) => {
+  unlockAudio();
   if (!recPanel.hidden && !event.target.closest(".recordings-menu")) recPanel.hidden = true;
 });
 
 stream.connect();
+liveAudio.connect();
 api("/api/status").then(renderStatus).catch(console.error);
 refreshRecordings();
 setInterval(async () => {

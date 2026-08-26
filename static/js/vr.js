@@ -1,26 +1,54 @@
 function drawBitmap(canvas, bitmap, hfovDeg) {
   if (!canvas || !bitmap) return;
-  if (canvas.width !== bitmap.width) canvas.width = bitmap.width;
-  if (canvas.height !== bitmap.height) canvas.height = bitmap.height;
+  // Keep canvas pixel size stable. Resizing on every resolution change (e.g. when
+  // recording drops preview to 640px) leaves the new frame nested in a corner of
+  // the previous WebGL CanvasTexture on Quest Browser.
+  if (!canvas.width || !canvas.height) {
+    canvas.width = bitmap.width || 1280;
+    canvas.height = bitmap.height || 720;
+  }
   const ctx = canvas.getContext("2d");
-  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  const cw = canvas.width;
+  const ch = canvas.height;
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, cw, ch);
+  const scale = Math.min(cw / bitmap.width, ch / bitmap.height);
+  const dw = bitmap.width * scale;
+  const dh = bitmap.height * scale;
+  const ox = (cw - dw) / 2;
+  const oy = (ch - dh) / 2;
+  ctx.drawImage(bitmap, ox, oy, dw, dh);
   if (typeof drawStreamGrid === "function") {
-    drawStreamGrid(ctx, 0, 0, canvas.width, canvas.height, hfovDeg);
+    drawStreamGrid(ctx, ox, oy, dw, dh, hfovDeg);
   }
 }
 
 function paintPlaceholder(canvas, label) {
-  canvas.width = 960;
-  canvas.height = 540;
+  if (!canvas.width) canvas.width = 1280;
+  if (!canvas.height) canvas.height = 720;
   const ctx = canvas.getContext("2d");
   ctx.fillStyle = "#151920";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "#3de0ff";
   ctx.font = "bold 72px sans-serif";
-  ctx.fillText(label, 80, 280);
+  ctx.fillText(label, 80, canvas.height * 0.5);
   ctx.fillStyle = "#9aa6c2";
   ctx.font = "32px sans-serif";
-  ctx.fillText("Waiting for camera stream…", 80, 360);
+  ctx.fillText("Waiting for camera stream…", 80, canvas.height * 0.5 + 80);
+}
+
+function copyCanvas(dst, src) {
+  if (!dst || !src || src.width < 32) return false;
+  if (!dst.width) dst.width = 1280;
+  if (!dst.height) dst.height = 720;
+  const ctx = dst.getContext("2d");
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, dst.width, dst.height);
+  const scale = Math.min(dst.width / src.width, dst.height / src.height);
+  const dw = src.width * scale;
+  const dh = src.height * scale;
+  ctx.drawImage(src, (dst.width - dw) / 2, (dst.height - dh) / 2, dw, dh);
+  return true;
 }
 
 function roundedCornerAlpha(THREE, width, height, radiusPx) {
@@ -56,14 +84,6 @@ function roundedCornerAlpha(THREE, width, height, radiusPx) {
   tex.generateMipmaps = false;
   tex.needsUpdate = true;
   return tex;
-}
-
-function copyCanvas(dst, src) {
-  if (!dst || !src || src.width < 320) return false;
-  if (dst.width !== src.width) dst.width = src.width;
-  if (dst.height !== src.height) dst.height = src.height;
-  dst.getContext("2d").drawImage(src, 0, 0, dst.width, dst.height);
-  return true;
 }
 
 function isHandInput(src) {
@@ -259,18 +279,17 @@ class StereoVR {
     if (appEl) appEl.setAttribute("hidden", "");
     const THREE = window.THREE;
     const canvas = document.createElement("canvas");
-    canvas.style.display = "block";
+    // Hide the page canvas while XR is presenting so Quest Browser cannot
+    // composite a second copy of the plane into the headset view.
+    canvas.style.cssText = "position:absolute;inset:0;width:1px;height:1px;opacity:0;pointer-events:none;";
     this.renderer = new THREE.WebGLRenderer({
       canvas: canvas,
       antialias: true,
       alpha: false,
     });
     this.renderer.setPixelRatio(1);
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setSize(1, 1, false);
     this.renderer.toneMapping = THREE.NoToneMapping;
-    this.renderer.domElement.style.position = "absolute";
-    this.renderer.domElement.style.inset = "0";
-    this.renderer.domElement.style.zIndex = "0";
     this.renderer.xr.enabled = true;
     this.renderer.xr.setReferenceSpaceType("local");
     this.root.innerHTML = "";
@@ -283,6 +302,11 @@ class StereoVR {
 
     this.leftCanvas = document.createElement("canvas");
     this.rightCanvas = document.createElement("canvas");
+    // Fixed texture size — never resize while presenting (avoids Quest nested-frame bug).
+    this.leftCanvas.width = 1280;
+    this.leftCanvas.height = 720;
+    this.rightCanvas.width = 1280;
+    this.rightCanvas.height = 720;
     paintPlaceholder(this.leftCanvas, "LEFT");
     paintPlaceholder(this.rightCanvas, "RIGHT");
     copyCanvas(this.leftCanvas, document.getElementById("left-canvas"));

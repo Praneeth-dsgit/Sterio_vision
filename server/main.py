@@ -153,6 +153,44 @@ async def ws_stream(ws: WebSocket) -> None:
         engine.stats["clients"] = max(int(engine.stats.get("clients") or 1) - 1, 0)
 
 
+@app.websocket("/ws/audio")
+async def ws_audio(ws: WebSocket) -> None:
+    """Live mic PCM: first text hello JSON, then raw s16le mono chunks."""
+    import queue as queue_mod
+
+    await ws.accept()
+    hub = engine.audio_hub
+    q = hub.acquire_live()
+
+    def _pull():
+        try:
+            return q.get(timeout=0.25)
+        except queue_mod.Empty:
+            return None
+
+    try:
+        await ws.send_json(
+            {
+                "type": "hello",
+                "rate": hub.sample_rate,
+                "channels": hub.channels,
+                "format": "s16le",
+                "device": hub.label or hub.device,
+                "enabled": hub.enabled,
+            }
+        )
+        while True:
+            chunk = await asyncio.get_event_loop().run_in_executor(None, _pull)
+            if chunk:
+                await ws.send_bytes(chunk)
+            else:
+                await asyncio.sleep(0.01)
+    except (WebSocketDisconnect, ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
+        pass
+    finally:
+        hub.release_live(q)
+
+
 def _ignore_windows_disconnect(loop: asyncio.AbstractEventLoop, context: dict) -> None:
     """Browser refresh/close trips WinError 10054 inside the Proactor event loop."""
     exc = context.get("exception")

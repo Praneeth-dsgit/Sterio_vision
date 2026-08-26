@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Stereo Vision</title>
-  <link rel="stylesheet" href="/static/css/app.css?v=vr-dom1" />
+  <link rel="stylesheet" href="/static/css/app.css?v=live-audio1" />
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
 </head>
 <body>
@@ -21,7 +21,7 @@
       <div class="toolbar">
         <button id="btn-vr" class="btn primary">VR Mode</button>
         <button id="btn-record" class="btn danger">Record</button>
-        <button id="btn-mute" class="btn" type="button" title="Mute microphone for recordings">Mute</button>
+        <button id="btn-mute" class="btn" type="button" title="Mute live mic + recordings">Mute</button>
         <button id="btn-swap" class="btn">Swap Cameras</button>
         <div class="recordings-menu">
           <button id="btn-recordings" class="btn" type="button">Saved recordings ▾</button>
@@ -53,11 +53,12 @@
 
   <div id="vr-root"></div>
 
-  <script src="/static/js/xr-shim.js?v=vr-dom1"></script>
+  <script src="/static/js/xr-shim.js?v=live-audio1"></script>
   <script src="/static/vendor/three.min.js"></script>
-  <script src="/static/js/protocol.js?v=vr-dom1"></script>
-  <script src="/static/js/stream.js?v=vr-dom1"></script>
-  <script src="/static/js/vr.js?v=vr-dom1"></script>
-  <script src="/static/js/app.js?v=vr-dom1"></script>
+  <script src="/static/js/protocol.js?v=live-audio1"></script>
+  <script src="/static/js/stream.js?v=live-audio1"></script>
+  <script src="/static/js/live-audio.js?v=live-audio1"></script>
+  <script src="/static/js/vr.js?v=live-audio1"></script>
+  <script src="/static/js/app.js?v=live-audio1"></script>
 </body>
 </html>
