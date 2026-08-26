@@ -52,6 +52,11 @@ async def record_stop() -> dict:
     return engine.stop_recording()
 
 
+@app.post("/api/cameras/restart")
+async def cameras_restart() -> dict:
+    return engine.restart_cameras()
+
+
 @app.post("/api/settings")
 async def settings(patch: dict = Body(...)) -> dict:
     return engine.apply_settings(patch)

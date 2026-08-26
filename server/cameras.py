@@ -205,6 +205,7 @@ class CameraWorker(threading.Thread):
         self._lock = threading.Lock()
         self._latest: Optional[Frame] = None
         self._halt = threading.Event()
+        self._force_reopen = False
         self.opened = False
         self.synthetic = False
         self.frames = 0
@@ -217,37 +218,99 @@ class CameraWorker(threading.Thread):
     def stop(self) -> None:
         self._halt.set()
 
+    def set_index(self, index: int) -> None:
+        """Update device index (USB remaps) and force a reopen."""
+        index = int(index)
+        with self._lock:
+            if index != self.index:
+                print(f"[{self.role}] index {self.index} → {index}", flush=True)
+                self.index = index
+            self._force_reopen = True
+
+    def request_reopen(self) -> None:
+        with self._lock:
+            self._force_reopen = True
+
     def run(self) -> None:
-        cap = open_capture(self.index, self.width, self.height, self.fps, self.fourcc)
-        self.opened = bool(cap.isOpened())
-        self.synthetic = not self.opened
+        cap: Optional[cv2.VideoCapture] = None
+        next_open_at = 0.0
         period = 1.0 / max(self.fps, 1)
         seq = 0
         try:
             while not self._halt.is_set():
                 t0 = time.time()
-                if self.synthetic:
-                    image = test_pattern(self.width, self.height, self.synthetic_label, self.synthetic_hue, t0)
-                    ok = True
-                else:
-                    ok, image = cap.read()
-                    if not ok or image is None:
-                        self.errors += 1
-                        if self.errors >= 20:
-                            self.synthetic = True
+                with self._lock:
+                    force = self._force_reopen
+                    self._force_reopen = False
+                    index = self.index
+
+                need_open = force or cap is None or (not cap.isOpened()) or self.synthetic
+                if need_open and t0 >= next_open_at:
+                    if cap is not None:
+                        try:
                             cap.release()
-                        time.sleep(0.02)
-                        continue
-                    self.errors = 0
-                    image = apply_flip(image, self.flip)
-                    image = fit_frame(image, self.width, self.height)
-                frame = Frame(image=image, timestamp=t0, index=seq, synthetic=self.synthetic)
+                        except Exception:
+                            pass
+                        cap = None
+                    print(f"[{self.role}] opening /dev-or-index {index}…", flush=True)
+                    cap = open_capture(index, self.width, self.height, self.fps, self.fourcc)
+                    if cap is not None and cap.isOpened():
+                        self.opened = True
+                        self.synthetic = False
+                        self.errors = 0
+                        print(f"[{self.role}] camera {index} live", flush=True)
+                    else:
+                        if cap is not None:
+                            try:
+                                cap.release()
+                            except Exception:
+                                pass
+                        cap = None
+                        self.opened = False
+                        self.synthetic = True
+                        next_open_at = t0 + 2.0
+
+                if self.synthetic or cap is None or not cap.isOpened():
+                    image = test_pattern(
+                        self.width, self.height, self.synthetic_label, self.synthetic_hue, t0
+                    )
+                    frame = Frame(image=image, timestamp=t0, index=seq, synthetic=True)
+                    with self._lock:
+                        self._latest = frame
+                    self.frames += 1
+                    seq += 1
+                    leftover = period - (time.time() - t0)
+                    if leftover > 0:
+                        time.sleep(leftover)
+                    continue
+
+                ok, image = cap.read()
+                if not ok or image is None or not looks_like_video(image):
+                    self.errors += 1
+                    if self.errors >= 15:
+                        print(f"[{self.role}] lost camera {index} — will reconnect", flush=True)
+                        self.synthetic = True
+                        self.opened = False
+                        try:
+                            cap.release()
+                        except Exception:
+                            pass
+                        cap = None
+                        next_open_at = time.time() + 1.0
+                    time.sleep(0.02)
+                    continue
+
+                self.errors = 0
+                image = apply_flip(image, self.flip)
+                image = fit_frame(image, self.width, self.height)
+                frame = Frame(image=image, timestamp=t0, index=seq, synthetic=False)
                 with self._lock:
                     self._latest = frame
                 self.frames += 1
                 seq += 1
-                leftover = period - (time.time() - t0)
-                if leftover > 0 and self.synthetic:
-                    time.sleep(leftover)
         finally:
-            cap.release()
+            if cap is not None:
+                try:
+                    cap.release()
+                except Exception:
+                    pass

@@ -85,10 +85,10 @@ function renderStatus(data) {
   if (rec.error) {
     document.getElementById("overlay-msg").style.display = "";
     document.getElementById("overlay-msg").textContent = `Record error: ${rec.error}`;
-  }
-
-  if (data.synthetic) {
-    document.getElementById("overlay-msg").textContent = "Test pattern — plug in USB cameras on the Jetson";
+  } else if (data.synthetic) {
+    document.getElementById("overlay-msg").style.display = "";
+    document.getElementById("overlay-msg").textContent =
+      "Camera disconnected — reconnecting… (plug USB back in; feed returns automatically)";
   }
 }
 

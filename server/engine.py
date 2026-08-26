@@ -73,6 +73,7 @@ class StereoEngine:
         self._fps_count = 0
         self._fps_t = time.time()
         self._available_cameras: list[dict] = []
+        self._last_rebind = 0.0
 
     def start(self) -> None:
         self.stop()
@@ -143,6 +144,45 @@ class StereoEngine:
     def stop_recording(self) -> dict:
         path = self.recorder.stop()
         return {"ok": True, "file": str(path) if path else None}
+
+    def restart_cameras(self) -> dict:
+        """Full camera reopen — use after USB unplug/replug if auto-reconnect stalls."""
+        was_recording = self.recorder.recording
+        self.start()
+        if was_recording or self.cfg["record"]["auto_start"]:
+            threading.Timer(0.8, self.start_recording).start()
+        return {"ok": True, "cameras": self.status()["cameras"]}
+
+    def _rebind_if_needed(self) -> None:
+        """When cameras are missing, re-discover V4L indices (USB remaps on Jetson)."""
+        if self.left is None or self.right is None:
+            return
+        left_missing = bool(self.left.synthetic or not self.left.opened)
+        right_missing = bool(self.right.synthetic or not self.right.opened)
+        if not (left_missing or right_missing):
+            return
+        now = time.time()
+        if now - self._last_rebind < 3.0:
+            return
+        self._last_rebind = now
+        # Only re-probe device nodes when both are released — probing steals open devices.
+        if left_missing and right_missing:
+            cam = self.cfg["cameras"]
+            left_idx, right_idx = resolve_camera_indices(cam["left_index"], cam["right_index"])
+            self.cfg["cameras"]["left_index"] = left_idx
+            self.cfg["cameras"]["right_index"] = right_idx
+            try:
+                self._available_cameras = list_cameras()
+            except Exception:
+                pass
+            print(f"[engine] rebind cameras → {left_idx}/{right_idx}", flush=True)
+            self.left.set_index(left_idx)
+            self.right.set_index(right_idx)
+        else:
+            if left_missing:
+                self.left.request_reopen()
+            if right_missing:
+                self.right.request_reopen()
 
     def apply_settings(self, patch: dict) -> dict:
         cfg = load_config()
@@ -217,6 +257,7 @@ class StereoEngine:
         period = 1.0 / max(int(cam["fps"]), 1)
         while not self._stop.is_set():
             t0 = time.time()
+            self._rebind_if_needed()
             left = self.left.latest() if self.left else None
             right = self.right.latest() if self.right else None
             paired = pair_frames(left, right, max_skew)
