@@ -104,51 +104,58 @@ function makeFlatCircleButton(THREE, kind) {
   mesh.userData.btnCanvas = canvas;
   mesh.userData.btnTex = tex;
   mesh.userData.kind = kind;
-  if (kind === "back") {
-    const ctx = canvas.getContext("2d");
-    ctx.clearRect(0, 0, size, size);
-    ctx.beginPath();
-    ctx.arc(128, 128, 108, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(8,12,20,0.92)";
-    ctx.fill();
-    ctx.lineWidth = 10;
-    ctx.strokeStyle = "#3de0ff";
-    ctx.stroke();
-    ctx.fillStyle = "#3de0ff";
-    ctx.font = "700 120px sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("←", 128, 136);
-    tex.needsUpdate = true;
-  } else {
-    paintRecordButton(mesh, false);
-  }
+  if (kind === "back") paintBackButton(mesh);
+  else paintRecordButton(mesh, false);
   return mesh;
+}
+
+function paintBackButton(mesh) {
+  if (!mesh || !mesh.userData || !mesh.userData.btnCanvas) return;
+  const canvas = mesh.userData.btnCanvas;
+  const ctx = canvas.getContext("2d");
+  const s = canvas.width;
+  const cx = s / 2;
+  const cy = s / 2;
+  ctx.clearRect(0, 0, s, s);
+  ctx.beginPath();
+  ctx.arc(cx, cy, s * 0.48, 0, Math.PI * 2);
+  ctx.fillStyle = "#1498b8";
+  ctx.fill();
+  // Filled back-arrow, optically centered
+  ctx.fillStyle = "#041018";
+  ctx.beginPath();
+  const ax = cx - 4;
+  ctx.moveTo(ax - 46, cy);
+  ctx.lineTo(ax + 10, cy - 40);
+  ctx.lineTo(ax + 10, cy - 16);
+  ctx.lineTo(ax + 50, cy - 16);
+  ctx.lineTo(ax + 50, cy + 16);
+  ctx.lineTo(ax + 10, cy + 16);
+  ctx.lineTo(ax + 10, cy + 40);
+  ctx.closePath();
+  ctx.fill();
+  mesh.userData.btnTex.needsUpdate = true;
 }
 
 function paintRecordButton(mesh, recording) {
   if (!mesh || !mesh.userData || !mesh.userData.btnCanvas) return;
   const canvas = mesh.userData.btnCanvas;
   const ctx = canvas.getContext("2d");
-  const size = canvas.width;
-  const cx = size / 2;
-  const cy = size / 2;
-  const stroke = recording ? "#ff3b5c" : "#3de0ff";
-  ctx.clearRect(0, 0, size, size);
+  const s = canvas.width;
+  const cx = s / 2;
+  const cy = s / 2;
+  ctx.clearRect(0, 0, s, s);
   ctx.beginPath();
-  ctx.arc(cx, cy, size * 0.42, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(8,12,20,0.92)";
+  ctx.arc(cx, cy, s * 0.48, 0, Math.PI * 2);
+  ctx.fillStyle = recording ? "#d62848" : "#1498b8";
   ctx.fill();
-  ctx.lineWidth = size * 0.04;
-  ctx.strokeStyle = stroke;
-  ctx.stroke();
   if (recording) {
-    const sq = size * 0.18;
-    ctx.fillStyle = "#ff3b5c";
+    const sq = s * 0.28;
+    ctx.fillStyle = "#041018";
     ctx.fillRect(cx - sq / 2, cy - sq / 2, sq, sq);
   } else {
     ctx.beginPath();
-    ctx.arc(cx, cy, size * 0.14, 0, Math.PI * 2);
+    ctx.arc(cx, cy, s * 0.18, 0, Math.PI * 2);
     ctx.fillStyle = "#ff3b5c";
     ctx.fill();
   }
@@ -291,7 +298,7 @@ class StereoVR {
     this._planeH = 1.24;
     this._dropY = -0.25;
     const geo = new THREE.PlaneGeometry(this._planeW, this._planeH);
-    this._roundAlpha = roundedCornerAlpha(THREE, this._planeW, this._planeH, 22);
+    this._roundAlpha = roundedCornerAlpha(THREE, this._planeW, this._planeH, 10);
     const matOpts = {
       depthTest: false,
       depthWrite: false,

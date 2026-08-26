@@ -75,6 +75,26 @@ async def download_recording(name: str):
     return FileResponse(path, filename=path.name)
 
 
+@app.delete("/api/recordings/{name}")
+async def delete_recording(name: str) -> dict:
+    safe = Path(name).name
+    if safe != name or ".." in name or "/" in name or "\\" in name:
+        return JSONResponse({"ok": False, "error": "invalid name"}, status_code=400)
+    path = recordings_dir() / safe
+    if path.suffix.lower() not in {".mp4", ".avi", ".mkv"}:
+        return JSONResponse({"ok": False, "error": "unsupported type"}, status_code=400)
+    if not path.is_file():
+        return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
+    active = engine.recorder.current_file
+    if active and Path(active).resolve() == path.resolve():
+        return JSONResponse({"ok": False, "error": "recording in progress"}, status_code=409)
+    try:
+        path.unlink()
+    except OSError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+    return {"ok": True, "name": safe}
+
+
 async def _mjpeg(getter):
     boundary = b"frame"
     while True:

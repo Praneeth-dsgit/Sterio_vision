@@ -89,7 +89,10 @@ async function refreshRecordings() {
   const data = await api("/api/recordings");
   const list = document.getElementById("recording-list");
   const btn = document.getElementById("btn-recordings");
-  btn.textContent = `Saved recordings (${data.files.length}) ▾`;
+  const label = btn.querySelector(".btn-label");
+  const title = `Saved recordings (${data.files.length}) ▾`;
+  if (label) label.textContent = title;
+  else btn.textContent = title;
   if (!data.files.length) {
     list.innerHTML = "<li>No recordings yet.</li>";
     return;
@@ -97,9 +100,34 @@ async function refreshRecordings() {
   list.innerHTML = data.files
     .map((f) => {
       const mb = (f.size / 1048576).toFixed(1);
-      return `<li><a href="/recordings/${encodeURIComponent(f.name)}">${f.name}</a><span>${mb} MB</span></li>`;
+      const safeName = String(f.name)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/"/g, "&quot;");
+      return `<li>
+        <div class="rec-meta">
+          <a href="/recordings/${encodeURIComponent(f.name)}">${safeName}</a>
+          <span class="rec-size">${mb} MB</span>
+        </div>
+        <button type="button" class="btn-delete" data-name="${safeName}">Delete</button>
+      </li>`;
     })
     .join("");
+  list.querySelectorAll(".btn-delete").forEach((el) => {
+    el.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const fileName = el.getAttribute("data-name");
+      if (!fileName) return;
+      if (!confirm(`Delete ${fileName}?`)) return;
+      try {
+        await api(`/api/recordings/${encodeURIComponent(fileName)}`, { method: "DELETE" });
+        await refreshRecordings();
+      } catch (err) {
+        alert(err.message || err);
+      }
+    });
+  });
 }
 
 async function toggleRecord() {
