@@ -58,6 +58,15 @@ async def cameras_restart() -> dict:
     return engine.restart_cameras()
 
 
+@app.post("/api/cameras/enable")
+async def cameras_enable(payload: dict = Body(None)) -> dict:
+    body = payload or {}
+    enabled = body.get("enabled")
+    if enabled is None:
+        enabled = not engine.cameras_enabled
+    return engine.set_cameras_enabled(bool(enabled))
+
+
 @app.get("/api/audio/devices")
 async def audio_devices() -> dict:
     return {"devices": list_audio_devices()}

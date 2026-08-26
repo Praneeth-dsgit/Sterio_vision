@@ -82,6 +82,7 @@ class StereoEngine:
         self._fps_t = time.time()
         self._available_cameras: list[dict] = []
         self._last_rebind = 0.0
+        self.cameras_enabled = True
 
     def _make_recorder(self, cam: dict) -> StereoRecorder:
         return StereoRecorder(
@@ -126,6 +127,7 @@ class StereoEngine:
         )
         self.left.start()
         self.right.start()
+        self.cameras_enabled = True
         self.audio_hub.configure(
             device=str(self.cfg["record"].get("audio_device", "auto")),
             enabled=bool(self.cfg["record"].get("audio", True)),
@@ -153,8 +155,8 @@ class StereoEngine:
         self.right = None
 
     def start_recording(self) -> dict:
-        if self._stop.is_set() or self.left is None:
-            return {"ok": False, "error": "engine stopped"}
+        if self._stop.is_set() or self.left is None or not self.cameras_enabled:
+            return {"ok": False, "error": "cameras off"}
         cam = self.cfg["cameras"]
         path = self.recorder.start(int(cam["width"]), int(cam["height"]))
         return {"ok": True, "file": str(path)}
@@ -169,10 +171,81 @@ class StereoEngine:
         self.start()
         if was_recording or self.cfg["record"]["auto_start"]:
             threading.Timer(0.8, self.start_recording).start()
-        return {"ok": True, "cameras": self.status()["cameras"]}
+        return {"ok": True, "cameras": self.status()["cameras"], "cameras_enabled": self.cameras_enabled}
+
+    def set_cameras_enabled(self, enabled: bool) -> dict:
+        """Release or reclaim USB cameras without restarting the HTTP server."""
+        enabled = bool(enabled)
+        if enabled == self.cameras_enabled and (
+            (enabled and self.left is not None) or (not enabled and self.left is None)
+        ):
+            return {"ok": True, "cameras_enabled": self.cameras_enabled}
+        if not enabled:
+            if self.recorder.recording:
+                self.recorder.stop()
+            if self.left:
+                self.left.stop()
+                self.left.join(timeout=2)
+            if self.right:
+                self.right.stop()
+                self.right.join(timeout=2)
+            self.left = None
+            self.right = None
+            with self._preview_lock:
+                self._preview = None
+                self._left_jpeg = None
+                self._right_jpeg = None
+                self._mjpeg_stereo = None
+            self.cameras_enabled = False
+            print("[engine] cameras off", flush=True)
+            return {"ok": True, "cameras_enabled": False}
+
+        # Re-open cameras using current config indices.
+        self.cfg = load_config()
+        cam = self.cfg["cameras"]
+        left_idx, right_idx = resolve_camera_indices(cam["left_index"], cam["right_index"])
+        self.cfg["cameras"]["left_index"] = left_idx
+        self.cfg["cameras"]["right_index"] = right_idx
+        self._available_cameras = list_cameras()
+        if self.left:
+            self.left.stop()
+            self.left.join(timeout=2)
+        if self.right:
+            self.right.stop()
+            self.right.join(timeout=2)
+        self.left = CameraWorker(
+            "left",
+            left_idx,
+            int(cam["width"]),
+            int(cam["height"]),
+            int(cam["fps"]),
+            cam["fourcc"],
+            cam.get("left_flip", "none"),
+            "LEFT",
+            0,
+        )
+        self.right = CameraWorker(
+            "right",
+            right_idx,
+            int(cam["width"]),
+            int(cam["height"]),
+            int(cam["fps"]),
+            cam["fourcc"],
+            cam.get("right_flip", "none"),
+            "RIGHT",
+            125,
+        )
+        self.left.start()
+        self.right.start()
+        self.cameras_enabled = True
+        self._last_pair_ids = (-1, -1)
+        print("[engine] cameras on", flush=True)
+        return {"ok": True, "cameras_enabled": True, "cameras": self.status()["cameras"]}
 
     def _rebind_if_needed(self) -> None:
         """When cameras are missing, re-discover V4L indices (USB remaps on Jetson)."""
+        if not self.cameras_enabled:
+            return
         if self.left is None or self.right is None:
             return
         left_missing = bool(self.left.synthetic or not self.left.opened)
@@ -269,6 +342,7 @@ class StereoEngine:
             "stream": self.stats,
             "record": self.recorder.snapshot(),
             "live_audio": self.audio_hub.snapshot(),
+            "cameras_enabled": self.cameras_enabled,
             "config": self.cfg,
             "synthetic": synthetic,
         }

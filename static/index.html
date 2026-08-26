@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Stereo Vision</title>
-  <link rel="stylesheet" href="/static/css/app.css?v=live-audio2" />
+  <link rel="stylesheet" href="/static/css/app.css?v=icon-btns2" />
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
 </head>
 <body>
@@ -21,7 +21,6 @@
       <div class="toolbar">
         <button id="btn-vr" class="btn primary">VR Mode</button>
         <button id="btn-record" class="btn danger">Record</button>
-        <button id="btn-mute" class="btn" type="button" title="Mute live mic + recordings">Mute</button>
         <button id="btn-swap" class="btn">Swap Cameras</button>
         <div class="recordings-menu">
           <button id="btn-recordings" class="btn" type="button">Saved recordings ▾</button>
@@ -32,6 +31,22 @@
       </div>
 
       <div class="status-pills">
+        <button id="btn-cam" class="icon-btn on" type="button" title="Turn cameras off" aria-label="Toggle cameras" aria-pressed="true">
+          <svg class="icon icon-cam-on" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M17 10.5V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3.5l4 4v-11l-4 4z"/>
+          </svg>
+          <svg class="icon icon-cam-off" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M3.27 2L2 3.27 4.73 6H4a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10c.4 0 .76-.12 1.07-.32L18.73 21 20 19.73 3.27 2zM17 10.5V7a2 2 0 0 0-2-2h-1.18l5.95 5.95L21 7.5v9l-2.23-2.23L17 12.68V10.5z"/>
+          </svg>
+        </button>
+        <button id="btn-mute" class="icon-btn on" type="button" title="Mute mic" aria-label="Toggle mute" aria-pressed="true">
+          <svg class="icon icon-mic-on" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/>
+          </svg>
+          <svg class="icon icon-mic-off" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M19 11h-1.7c0 .58-.1 1.13-.27 1.64l1.27 1.27c.44-.88.7-1.86.7-2.91zM4.27 3L3 4.27l6.01 6.01V11a3 3 0 0 0 4.89 2.32l1.52 1.52A6.96 6.96 0 0 1 5 11H3.3c0 3.08 2.1 5.64 4.9 6.42V21h4v-3.58c.8-.22 1.53-.58 2.18-1.05l3.35 3.35L19 18.73 4.27 3zM12 4a2 2 0 0 1 2 2v.18l-4.72 4.72A2 2 0 0 1 10 11V6a2 2 0 0 1 2-2z"/>
+          </svg>
+        </button>
         <span id="pill-link" class="pill">Connecting</span>
         <span id="pill-rec" class="pill">Idle</span>
         <span id="pill-mic" class="pill">Mic</span>
@@ -53,12 +68,12 @@
 
   <div id="vr-root"></div>
 
-  <script src="/static/js/xr-shim.js?v=live-audio2"></script>
+  <script src="/static/js/xr-shim.js?v=icon-btns2"></script>
   <script src="/static/vendor/three.min.js"></script>
-  <script src="/static/js/protocol.js?v=live-audio2"></script>
-  <script src="/static/js/stream.js?v=live-audio2"></script>
-  <script src="/static/js/live-audio.js?v=live-audio2"></script>
-  <script src="/static/js/vr.js?v=live-audio2"></script>
-  <script src="/static/js/app.js?v=live-audio2"></script>
+  <script src="/static/js/protocol.js?v=icon-btns2"></script>
+  <script src="/static/js/stream.js?v=icon-btns2"></script>
+  <script src="/static/js/live-audio.js?v=icon-btns2"></script>
+  <script src="/static/js/vr.js?v=icon-btns2"></script>
+  <script src="/static/js/app.js?v=icon-btns2"></script>
 </body>
 </html>

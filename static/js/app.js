@@ -8,6 +8,7 @@ let capW = 1280;
 let capH = 720;
 let lastCams = { leftIndex: 0, rightIndex: 1 };
 let audioEnabled = true;
+let camerasEnabled = true;
 
 function applyEyeLabels() {
   const swapped = stream.swapEyes;
@@ -54,6 +55,15 @@ function setPill(id, text, cls) {
   el.className = "pill " + (cls || "");
 }
 
+function setIconToggle(btn, on, titleOn, titleOff) {
+  if (!btn) return;
+  btn.classList.toggle("on", !!on);
+  btn.classList.toggle("off", !on);
+  btn.classList.toggle("muted", btn.id === "btn-mute" && !on);
+  btn.setAttribute("aria-pressed", on ? "true" : "false");
+  btn.title = on ? titleOn : titleOff;
+}
+
 async function api(path, opts) {
   const res = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, opts));
   if (!res.ok) throw new Error(await res.text());
@@ -74,39 +84,56 @@ function renderStatus(data) {
   };
   applyEyeLabels();
 
-  setPill("pill-link", stream.connected ? "Live" : "Reconnecting", stream.connected ? "ok" : "warn");
+  if (typeof data.cameras_enabled === "boolean") camerasEnabled = data.cameras_enabled;
+  setPill(
+    "pill-link",
+    !camerasEnabled ? "Cams Off" : stream.connected ? "Live" : "Reconnecting",
+    !camerasEnabled ? "warn" : stream.connected ? "ok" : "warn"
+  );
   setPill("pill-rec", rec.recording ? "REC" : "Idle", rec.recording ? "live" : "");
 
-  // Prefer config preference; while recording, show whether mic is actually open.
   const cfgAudio = data.config?.record?.audio;
   if (typeof cfgAudio === "boolean") audioEnabled = cfgAudio;
   else if (typeof rec.audio === "boolean" && !rec.recording) audioEnabled = !!rec.audio;
   const live = data.live_audio || {};
-  const micLive = audioEnabled && (live.live_audio || !!rec.audio || live.enabled !== false);
-  setPill("pill-mic", audioEnabled ? (live.live_audio || liveAudio.connected ? "Mic Live" : "Mic") : "Muted", audioEnabled ? "ok" : "muted");
+  setPill(
+    "pill-mic",
+    audioEnabled ? (live.live_audio || liveAudio.connected ? "Mic Live" : "Mic") : "Muted",
+    audioEnabled ? "ok" : "muted"
+  );
   liveAudio.setMuted(!audioEnabled);
-  const muteBtn = document.getElementById("btn-mute");
-  if (muteBtn) {
-    muteBtn.textContent = audioEnabled ? "Mute" : "Unmute";
-    muteBtn.classList.toggle("muted", !audioEnabled);
-    muteBtn.title = audioEnabled
-      ? "Mute live mic + recordings"
-      : "Unmute live mic + recordings";
-  }
+
+  setIconToggle(
+    document.getElementById("btn-mute"),
+    audioEnabled,
+    "Mute mic",
+    "Unmute mic"
+  );
+  setIconToggle(
+    document.getElementById("btn-cam"),
+    camerasEnabled,
+    "Turn cameras off",
+    "Turn cameras on"
+  );
 
   const btn = document.getElementById("btn-record");
   btn.textContent = rec.recording ? "Stop" : "Record";
   btn.classList.toggle("live", !!rec.recording);
+  btn.disabled = !camerasEnabled && !rec.recording;
   vr.setRecording(!!rec.recording);
 
   const filePath = rec.file || "";
   activeRecordingName = rec.recording && filePath ? filePath.split(/[/\\]/).pop() : null;
+  const overlay = document.getElementById("overlay-msg");
   if (rec.error) {
-    document.getElementById("overlay-msg").style.display = "";
-    document.getElementById("overlay-msg").textContent = `Record error: ${rec.error}`;
+    overlay.style.display = "";
+    overlay.textContent = `Record error: ${rec.error}`;
+  } else if (!camerasEnabled) {
+    overlay.style.display = "";
+    overlay.textContent = "Cameras off — tap the camera icon to turn them back on";
   } else if (data.synthetic) {
-    document.getElementById("overlay-msg").style.display = "";
-    document.getElementById("overlay-msg").textContent =
+    overlay.style.display = "";
+    overlay.textContent =
       "Camera disconnected — reconnecting… (plug USB back in; feed returns automatically)";
   }
 }
@@ -173,8 +200,6 @@ async function toggleRecord() {
   if (status.record?.recording) await api("/api/record/stop", { method: "POST", body: "{}" });
   else await api("/api/record/start", { method: "POST", body: "{}" });
   renderStatus(await api("/api/status"));
-  // Avoid refreshing the 2D recordings dropdown while in VR — Quest Browser
-  // can flash that HTML panel into the headset next to the video plane.
   if (!vr.active) refreshRecordings();
 }
 
@@ -190,11 +215,34 @@ async function toggleMute() {
   renderStatus(await api("/api/status"));
 }
 
+async function toggleCameras() {
+  const next = !camerasEnabled;
+  const res = await api("/api/cameras/enable", {
+    method: "POST",
+    body: JSON.stringify({ enabled: next }),
+  });
+  camerasEnabled = !!res.cameras_enabled;
+  if (!camerasEnabled) {
+    const ctxL = leftCanvas.getContext("2d");
+    const ctxR = rightCanvas.getContext("2d");
+    if (ctxL) {
+      ctxL.fillStyle = "#05070c";
+      ctxL.fillRect(0, 0, leftCanvas.width || 640, leftCanvas.height || 360);
+    }
+    if (ctxR) {
+      ctxR.fillStyle = "#05070c";
+      ctxR.fillRect(0, 0, rightCanvas.width || 640, rightCanvas.height || 360);
+    }
+  }
+  renderStatus(await api("/api/status"));
+}
+
 function unlockAudio() {
   liveAudio.resume().catch(() => {});
 }
 
 stream.onFrame((frame) => {
+  if (!camerasEnabled) return;
   document.getElementById("overlay-msg").style.display = "none";
   drawPreview(leftCanvas, frame.left);
   drawPreview(rightCanvas, frame.right);
@@ -209,6 +257,10 @@ document.getElementById("btn-record").addEventListener("click", () => {
 document.getElementById("btn-mute").addEventListener("click", () => {
   unlockAudio();
   toggleMute().catch((err) => alert(err.message || err));
+});
+document.getElementById("btn-cam").addEventListener("click", () => {
+  unlockAudio();
+  toggleCameras().catch((err) => alert(err.message || err));
 });
 document.getElementById("btn-swap").addEventListener("click", () => {
   stream.swapEyes = !stream.swapEyes;
