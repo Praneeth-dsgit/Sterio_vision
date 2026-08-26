@@ -6,6 +6,7 @@ let lensHfov = 70;
 let capW = 1280;
 let capH = 720;
 let lastCams = { leftIndex: 0, rightIndex: 1 };
+let audioEnabled = true;
 
 function applyEyeLabels() {
   const swapped = stream.swapEyes;
@@ -74,6 +75,21 @@ function renderStatus(data) {
 
   setPill("pill-link", stream.connected ? "Live" : "Reconnecting", stream.connected ? "ok" : "warn");
   setPill("pill-rec", rec.recording ? "REC" : "Idle", rec.recording ? "live" : "");
+
+  // Prefer config preference; while recording, show whether mic is actually open.
+  const cfgAudio = data.config?.record?.audio;
+  if (typeof cfgAudio === "boolean") audioEnabled = cfgAudio;
+  else if (typeof rec.audio === "boolean" && !rec.recording) audioEnabled = !!rec.audio;
+  const micLive = rec.recording ? !!rec.audio : audioEnabled;
+  setPill("pill-mic", micLive ? "Mic" : "Muted", micLive ? "ok" : "muted");
+  const muteBtn = document.getElementById("btn-mute");
+  if (muteBtn) {
+    muteBtn.textContent = audioEnabled ? "Mute" : "Unmute";
+    muteBtn.classList.toggle("muted", !audioEnabled);
+    muteBtn.title = audioEnabled
+      ? "Mute microphone for recordings"
+      : "Unmute microphone for recordings";
+  }
 
   const btn = document.getElementById("btn-record");
   btn.textContent = rec.recording ? "Stop" : "Record";
@@ -157,6 +173,16 @@ async function toggleRecord() {
   refreshRecordings();
 }
 
+async function toggleMute() {
+  const next = !audioEnabled;
+  await api("/api/settings", {
+    method: "POST",
+    body: JSON.stringify({ record: { audio: next } }),
+  });
+  audioEnabled = next;
+  renderStatus(await api("/api/status"));
+}
+
 stream.onFrame((frame) => {
   document.getElementById("overlay-msg").style.display = "none";
   drawPreview(leftCanvas, frame.left);
@@ -166,6 +192,9 @@ stream.onFrame((frame) => {
 vr.onToggleRecord = toggleRecord;
 
 document.getElementById("btn-record").addEventListener("click", toggleRecord);
+document.getElementById("btn-mute").addEventListener("click", () => {
+  toggleMute().catch((err) => alert(err.message || err));
+});
 document.getElementById("btn-swap").addEventListener("click", () => {
   stream.swapEyes = !stream.swapEyes;
   applyEyeLabels();

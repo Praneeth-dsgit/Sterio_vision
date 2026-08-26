@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import queue
-import shutil
 import subprocess
 import threading
 import time
@@ -12,11 +11,9 @@ from typing import Optional
 import cv2
 import numpy as np
 
+from .audio import MicRecorder, resolve_audio_ffmpeg_args
 from .config import recordings_dir
-
-
-def find_ffmpeg() -> Optional[str]:
-    return shutil.which("ffmpeg")
+from .ffmpeg_util import find_ffmpeg
 
 
 def _soft_encoder() -> list[str]:
@@ -51,7 +48,6 @@ def encoder_args() -> list[str]:
                 check=False,
             )
             listing = (probe.stdout or "") + (probe.stderr or "")
-            # nvmpi is the reliable Jetson path; skip v4l2m2m (often listed but broken).
             if "h264_nvmpi" in listing:
                 return ["-c:v", "h264_nvmpi", "-b:v", "8M"]
             if "h264_nvenc" in listing:
@@ -71,17 +67,27 @@ def stack_stereo(left: np.ndarray, right: np.ndarray, layout: str = "sbs") -> np
 
 class StereoRecorder:
     """
-    Writes unique frames only (no freeze-frame padding).
-    On stop, remuxes so file FPS matches real capture rate → correct duration + smooth motion.
+    Writes unique video frames + optional mic audio (USB camera mic via ALSA/Pulse/dshow).
+    On stop, remuxes so file FPS matches real capture rate.
     """
 
-    def __init__(self, fps: int, layout: str = "sbs", segment_minutes: int = 5, scale: float = 1.0):
+    def __init__(
+        self,
+        fps: int,
+        layout: str = "sbs",
+        segment_minutes: int = 5,
+        scale: float = 1.0,
+        audio: bool = True,
+        audio_device: str = "auto",
+    ):
         self.fps = max(int(fps), 1)
         self.layout = layout
         self.segment_minutes = max(int(segment_minutes), 0)
         self.scale = float(scale) if scale else 1.0
         if self.scale <= 0:
             self.scale = 1.0
+        self.audio_enabled = bool(audio)
+        self.audio_device = audio_device or "auto"
         self._proc: Optional[subprocess.Popen] = None
         self._lock = threading.Lock()
         self._active_path: Optional[Path] = None
@@ -103,6 +109,11 @@ class StereoRecorder:
         self._enc = encoder_args()
         self._stderr_thread: Optional[threading.Thread] = None
         self._stderr_tail = ""
+        self._audio_label: Optional[str] = None
+        self._audio_active = False
+        self._mic: Optional[MicRecorder] = None
+        self._wav_path: Optional[Path] = None
+        self._ffmpeg_inline_audio = False
 
     @property
     def recording(self) -> bool:
@@ -130,15 +141,30 @@ class StereoRecorder:
         self._eye_h = eye_h
         self._enc = encoder_args()
         self._stderr_tail = ""
+        self._audio_label = None
+        self._audio_active = False
+        self._ffmpeg_inline_audio = False
+        self._wav_path = None
+        self._ffmpeg = find_ffmpeg()
         path = out_dir / f"{stamp}_stereo.mp4"
 
+        audio_args = None
+        if self.audio_enabled:
+            audio_args = resolve_audio_ffmpeg_args(self.audio_device)
+
         if self._ffmpeg:
-            self._proc = self._spawn_ffmpeg(path, stereo_w, stereo_h, self._enc)
+            self._proc = self._spawn_ffmpeg(path, stereo_w, stereo_h, self._enc, audio_args)
             if self._proc is None or self._proc.poll() is not None:
-                # HW encoder often listed but fails at runtime — fall back to libx264.
                 self._cleanup_proc()
                 self._enc = _soft_encoder()
-                self._proc = self._spawn_ffmpeg(path, stereo_w, stereo_h, self._enc)
+                self._proc = self._spawn_ffmpeg(path, stereo_w, stereo_h, self._enc, audio_args)
+            if (self._proc is None or self._proc.poll() is not None) and audio_args is not None:
+                print(f"[record] audio open failed ({self._stderr_tail or 'unknown'}); video only", flush=True)
+                self._cleanup_proc()
+                self._audio_label = None
+                self._audio_active = False
+                self._ffmpeg_inline_audio = False
+                self._proc = self._spawn_ffmpeg(path, stereo_w, stereo_h, self._enc, None)
 
         if self._proc is None or self._proc.poll() is not None:
             self._cleanup_proc()
@@ -147,7 +173,26 @@ class StereoRecorder:
             self._fallback_writer = cv2.VideoWriter(str(path), fourcc, float(self.fps), (stereo_w, stereo_h))
             if not self._fallback_writer.isOpened():
                 self._fallback_writer = None
-                raise RuntimeError("Could not start recorder. Install ffmpeg for MP4 output.")
+                raise RuntimeError(
+                    "Could not start recorder. Install ffmpeg (or: pip install imageio-ffmpeg)."
+                )
+            self._audio_active = False
+            self._audio_label = None
+            self._ffmpeg_inline_audio = False
+
+        # Windows (and Linux fallback): capture mic to WAV via PortAudio, mux on stop.
+        if self.audio_enabled and not self._ffmpeg_inline_audio:
+            wav_path = path.with_suffix(".wav")
+            mic = MicRecorder(device=self.audio_device)
+            if mic.start(wav_path):
+                self._mic = mic
+                self._wav_path = wav_path
+                self._audio_active = True
+                self._audio_label = mic.label
+            else:
+                print(f"[record] mic capture failed: {mic.error}", flush=True)
+                if not self._audio_active:
+                    self._audio_label = mic.error or "mic unavailable"
 
         self._active_path = path
         self._started_at = time.time()
@@ -160,9 +205,20 @@ class StereoRecorder:
         self._drain_queue()
         self._worker = threading.Thread(target=self._worker_loop, name="stereo-recorder", daemon=True)
         self._worker.start()
+        if self._audio_active:
+            print(f"[record] audio: {self._audio_label}", flush=True)
+        elif self.audio_enabled:
+            print("[record] recording without audio (mic not available)", flush=True)
         return path
 
-    def _spawn_ffmpeg(self, path: Path, stereo_w: int, stereo_h: int, enc: list[str]) -> Optional[subprocess.Popen]:
+    def _spawn_ffmpeg(
+        self,
+        path: Path,
+        stereo_w: int,
+        stereo_h: int,
+        enc: list[str],
+        audio_args: Optional[tuple[list[str], str]],
+    ) -> Optional[subprocess.Popen]:
         cmd = [
             self._ffmpeg,
             "-hide_banner",
@@ -177,18 +233,55 @@ class StereoRecorder:
             f"{stereo_w}x{stereo_h}",
             "-r",
             str(self.fps),
+            "-thread_queue_size",
+            "64",
             "-i",
             "-",
-            *enc,
-            "-pix_fmt",
-            "yuv420p",
-            "-an",
-            "-movflags",
-            "+frag_keyframe+empty_moov+default_base_moof",
-            str(path),
         ]
+        have_audio = False
+        if audio_args:
+            args, label = audio_args
+            cmd.extend(args)
+            self._audio_label = label
+            have_audio = True
+
+        cmd.extend(enc)
+        cmd.extend(["-pix_fmt", "yuv420p"])
+        if have_audio:
+            # -shortest: closing the video pipe ends the file (mic stays open otherwise).
+            cmd.extend(
+                [
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "128k",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "44100",
+                    "-af",
+                    "aresample=async=1:first_pts=0",
+                    "-shortest",
+                ]
+            )
+            self._audio_active = True
+        else:
+            cmd.append("-an")
+            self._audio_active = False
+            self._audio_label = None
+            self._ffmpeg_inline_audio = False
+
+        if have_audio:
+            self._ffmpeg_inline_audio = True
+
+        cmd.extend(
+            [
+                "-movflags",
+                "+frag_keyframe+empty_moov+default_base_moof",
+                str(path),
+            ]
+        )
         try:
-            # bufsize=0: unbuffered so frames hit ffmpeg (and disk) immediately.
             proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
@@ -198,6 +291,7 @@ class StereoRecorder:
             )
         except OSError as exc:
             self.error = str(exc)
+            self._audio_active = False
             return None
         self._stderr_thread = threading.Thread(
             target=self._drain_stderr,
@@ -206,8 +300,7 @@ class StereoRecorder:
             daemon=True,
         )
         self._stderr_thread.start()
-        # Give ffmpeg a moment to reject a bad encoder before we feed frames.
-        time.sleep(0.25)
+        time.sleep(0.35)
         return proc
 
     def _drain_stderr(self, proc: subprocess.Popen) -> None:
@@ -278,7 +371,6 @@ class StereoRecorder:
             if self._proc and self._proc.stdin and self._proc.poll() is None:
                 try:
                     self._proc.stdin.write(payload)
-                    # Critical: without flush, Python/OS may hold data and file stays 0 bytes.
                     self._proc.stdin.flush()
                     self._frames += 1
                     self._bytes += len(payload)
@@ -295,11 +387,16 @@ class StereoRecorder:
     def stop(self) -> Optional[Path]:
         path = self._active_path
         started = self._started_at
+        had_inline_audio = self._ffmpeg_inline_audio
         self._worker_stop.set()
         self._recording = False
         if self._worker and self._worker.is_alive():
             self._worker.join(timeout=12)
         self._worker = None
+        wav_path = None
+        if self._mic is not None:
+            wav_path = self._mic.stop()
+            self._mic = None
         with self._lock:
             self._cleanup_proc()
             if self._fallback_writer is not None:
@@ -307,14 +404,100 @@ class StereoRecorder:
                 self._fallback_writer = None
         frames = self._frames
         self._active_path = None
+        self._audio_active = False
+        self._ffmpeg_inline_audio = False
+        self._wav_path = None
+        final_path = path
         if path and path.exists() and frames > 1 and started > 0:
             elapsed = max(time.time() - started, 0.001)
             actual_fps = frames / elapsed
-            self._finalize(path, actual_fps)
-        return path
+            if wav_path and wav_path.exists() and wav_path.stat().st_size > 44:
+                muxed = self._mux_wav(path, wav_path, actual_fps)
+                if muxed:
+                    try:
+                        wav_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    if path.suffix.lower() != ".mp4":
+                        final_path = path.with_suffix(".mp4")
+                else:
+                    print(f"[record] kept sidecar audio: {wav_path}", flush=True)
+            else:
+                self._finalize(path, actual_fps, keep_audio=had_inline_audio)
+                if wav_path and wav_path.exists():
+                    try:
+                        wav_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+        elif wav_path and wav_path.exists():
+            try:
+                wav_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return final_path
 
-    def _finalize(self, path: Path, actual_fps: float) -> None:
-        """Defrag + retag timing so players show wall-clock duration without freeze pads."""
+    def _mux_wav(self, video_path: Path, wav_path: Path, actual_fps: float) -> bool:
+        """Attach WAV mic track onto the video file (MP4 preferred)."""
+        if not self._ffmpeg:
+            return False
+        fps = max(1.0, min(float(self.fps) * 1.15, actual_fps))
+        out_mp4 = video_path if video_path.suffix.lower() == ".mp4" else video_path.with_suffix(".mp4")
+        tmp = out_mp4.with_name(out_mp4.stem + "_mux" + out_mp4.suffix)
+        cmd = [
+            self._ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-r",
+            f"{fps:.4f}",
+            "-i",
+            str(video_path),
+            "-i",
+            str(wav_path),
+            "-c:v",
+            "copy" if video_path.suffix.lower() == ".mp4" else "libx264",
+        ]
+        if video_path.suffix.lower() != ".mp4":
+            cmd.extend(["-preset", "ultrafast", "-crf", "23"])
+        cmd.extend(
+            [
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-ac",
+                "1",
+                "-ar",
+                "44100",
+                "-shortest",
+                "-movflags",
+                "+faststart",
+                str(tmp),
+            ]
+        )
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180, check=False)
+            if proc.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
+                if out_mp4 != video_path and video_path.exists():
+                    try:
+                        video_path.unlink()
+                    except OSError:
+                        pass
+                tmp.replace(out_mp4)
+                return True
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
+            if proc.stderr:
+                print(f"[record] mux failed: {proc.stderr.strip()[:240]}", flush=True)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            print(f"[record] mux error: {exc}", flush=True)
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
+        return False
+
+    def _finalize(self, path: Path, actual_fps: float, keep_audio: bool = False) -> None:
+        """Defrag + retag timing. Keep AAC track when present."""
         if not self._ffmpeg or not path.exists() or path.suffix.lower() != ".mp4":
             return
         if path.stat().st_size < 1024:
@@ -333,11 +516,10 @@ class StereoRecorder:
             str(path),
             "-c",
             "copy",
-            "-an",
-            "-movflags",
-            "+faststart",
-            str(tmp),
         ]
+        if not keep_audio:
+            cmd.append("-an")
+        cmd.extend(["-movflags", "+faststart", str(tmp)])
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180, check=False)
             if proc.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
@@ -365,7 +547,14 @@ class StereoRecorder:
                 except Exception:
                     pass
                 self._proc.stdin.close()
-            self._proc.wait(timeout=12)
+            try:
+                self._proc.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                self._proc.terminate()
+                try:
+                    self._proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self._proc.kill()
         except Exception:
             try:
                 self._proc.kill()
@@ -394,6 +583,8 @@ class StereoRecorder:
             "target_fps": self.fps,
             "scale": self.scale,
             "encoder": self._enc[1] if len(self._enc) > 1 else None,
+            "audio": self._audio_active if self.recording else self.audio_enabled,
+            "audio_device": self._audio_label or self.audio_device,
             "ffmpeg": bool(self._ffmpeg),
             "error": self.error,
             "elapsed_sec": elapsed,

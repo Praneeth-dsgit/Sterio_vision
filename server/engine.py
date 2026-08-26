@@ -52,6 +52,8 @@ class StereoEngine:
             layout=self.cfg["record"]["stereo_layout"],
             segment_minutes=int(self.cfg["record"]["segment_minutes"]),
             scale=float(self.cfg["record"].get("scale", 1.0)),
+            audio=bool(self.cfg["record"].get("audio", True)),
+            audio_device=str(self.cfg["record"].get("audio_device", "auto")),
         )
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -112,6 +114,8 @@ class StereoEngine:
             layout=self.cfg["record"]["stereo_layout"],
             segment_minutes=int(self.cfg["record"]["segment_minutes"]),
             scale=float(self.cfg["record"].get("scale", 1.0)),
+            audio=bool(self.cfg["record"].get("audio", True)),
+            audio_device=str(self.cfg["record"].get("audio_device", "auto")),
         )
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="stereo-engine", daemon=True)
@@ -198,6 +202,8 @@ class StereoEngine:
         self.recorder.segment_minutes = int(cfg["record"]["segment_minutes"])
         self.recorder.layout = cfg["record"]["stereo_layout"]
         self.recorder.scale = float(cfg["record"].get("scale", 1.0))
+        self.recorder.audio_enabled = bool(cfg["record"].get("audio", True))
+        self.recorder.audio_device = str(cfg["record"].get("audio_device", "auto"))
         if restart:
             self.start()
         elif cfg["record"]["auto_start"] and not self.recorder.recording:

@@ -65,6 +65,7 @@ h1 { margin: 0; font-size: 20px; }
 .btn.primary { background: linear-gradient(180deg, #2ad7f3, #1490c2); color: #041018; border: 0; }
 .btn.danger { background: #3a1520; border-color: #7a2033; }
 .btn.danger.live { background: var(--red); color: #fff; border: 0; }
+.btn.muted { border-color: #7a2033; color: #ff8fa3; background: #2a1218; }
 
 .recordings-menu { position: relative; }
 .recordings-panel {
@@ -129,6 +130,7 @@ h1 { margin: 0; font-size: 20px; }
 .pill.ok { color: var(--green); border-color: #1f6b48; }
 .pill.warn { color: var(--amber); border-color: #6b5118; }
 .pill.live { color: var(--red); border-color: #7a2033; }
+.pill.muted { color: #ff8fa3; border-color: #7a2033; }
 
 .stage {
   position: relative;

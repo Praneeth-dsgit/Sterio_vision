@@ -40,6 +40,9 @@ DEFAULTS: dict[str, Any] = {
         "stereo_layout": "sbs",
         # 1.0 = full capture size; 0.75 cuts encode load a lot on Jetson with little visible loss
         "scale": 0.75,
+        # USB camera mic (ALSA/Pulse). device: auto | off | default | pulse | plughw:1,0
+        "audio": True,
+        "audio_device": "auto",
     },
 }
 

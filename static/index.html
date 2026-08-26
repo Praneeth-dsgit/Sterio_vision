@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Stereo Vision</title>
-  <link rel="stylesheet" href="/static/css/app.css?v=cam-hotplug1" />
+  <link rel="stylesheet" href="/static/css/app.css?v=mute1" />
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
 </head>
 <body>
@@ -21,6 +21,7 @@
       <div class="toolbar">
         <button id="btn-vr" class="btn primary">VR Mode</button>
         <button id="btn-record" class="btn danger">Record</button>
+        <button id="btn-mute" class="btn" type="button" title="Mute microphone for recordings">Mute</button>
         <button id="btn-swap" class="btn">Swap Cameras</button>
         <div class="recordings-menu">
           <button id="btn-recordings" class="btn" type="button">Saved recordings ▾</button>
@@ -33,6 +34,7 @@
       <div class="status-pills">
         <span id="pill-link" class="pill">Connecting</span>
         <span id="pill-rec" class="pill">Idle</span>
+        <span id="pill-mic" class="pill">Mic</span>
       </div>
     </header>
 
@@ -51,11 +53,11 @@
 
   <div id="vr-root"></div>
 
-  <script src="/static/js/xr-shim.js?v=cam-hotplug1"></script>
+  <script src="/static/js/xr-shim.js?v=mute1"></script>
   <script src="/static/vendor/three.min.js"></script>
-  <script src="/static/js/protocol.js?v=cam-hotplug1"></script>
-  <script src="/static/js/stream.js?v=cam-hotplug1"></script>
-  <script src="/static/js/vr.js?v=cam-hotplug1"></script>
-  <script src="/static/js/app.js?v=cam-hotplug1"></script>
+  <script src="/static/js/protocol.js?v=mute1"></script>
+  <script src="/static/js/stream.js?v=mute1"></script>
+  <script src="/static/js/vr.js?v=mute1"></script>
+  <script src="/static/js/app.js?v=mute1"></script>
 </body>
 </html>

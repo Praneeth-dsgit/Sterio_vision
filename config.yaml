@@ -40,3 +40,6 @@ record:
   stereo_layout: sbs   # sbs | tb
   # Encode scale (1.0 = full 1280x720/eye). 0.75 keeps motion smooth on Jetson CPU.
   scale: 0.75
+  # Capture USB camera mic into the MP4 (AAC). Set audio_device to plughw:N,0 if auto misses it.
+  audio: true
+  audio_device: auto  # auto | off | default | pulse | plughw:1,0

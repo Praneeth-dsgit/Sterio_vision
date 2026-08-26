@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from .certs import ensure_certs, public_urls
 from .config import ROOT, load_config, recordings_dir
 from .engine import StereoEngine
+from .audio import list_audio_devices
 
 class NoStoreStaticFiles(StaticFiles):
     async def get_response(self, path, scope):
@@ -55,6 +56,11 @@ async def record_stop() -> dict:
 @app.post("/api/cameras/restart")
 async def cameras_restart() -> dict:
     return engine.restart_cameras()
+
+
+@app.get("/api/audio/devices")
+async def audio_devices() -> dict:
+    return {"devices": list_audio_devices()}
 
 
 @app.post("/api/settings")
