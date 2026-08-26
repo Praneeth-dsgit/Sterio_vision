@@ -66,75 +66,206 @@ function copyCanvas(dst, src) {
   return true;
 }
 
-function makeCircleButton(THREE, label, fill, stroke) {
-  const size = 256;
+function makeLabelTexture(THREE, drawFn, size) {
   const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
+  canvas.width = size || 256;
+  canvas.height = size || 256;
   const ctx = canvas.getContext("2d");
-  const cx = size / 2;
-  const cy = size / 2;
-  const r = size * 0.42;
-  ctx.clearRect(0, 0, size, size);
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = fill || "rgba(8,12,20,0.92)";
-  ctx.fill();
-  ctx.lineWidth = size * 0.04;
-  ctx.strokeStyle = stroke || "#3de0ff";
-  ctx.stroke();
-  ctx.fillStyle = stroke || "#3de0ff";
-  ctx.font = `700 ${Math.round(size * 0.22)}px sans-serif`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(label, cx, cy + 2);
+  drawFn(ctx, canvas.width, canvas.height);
   const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
   tex.needsUpdate = true;
-  const mesh = new THREE.Mesh(
-    new THREE.CircleGeometry(0.14, 48),
-    new THREE.MeshBasicMaterial({
-      map: tex,
-      transparent: true,
-      depthTest: false,
-      toneMapped: false,
-      side: THREE.DoubleSide,
+  return { canvas, tex };
+}
+
+function makeBackButton3d(THREE) {
+  const group = new THREE.Group();
+  group.name = "vr-back-3d";
+  const R = 0.12;
+  const D = 0.05;
+  const body = new THREE.Mesh(
+    new THREE.CylinderGeometry(R, R, D, 48),
+    new THREE.MeshStandardMaterial({
+      color: 0x102038,
+      metalness: 0.35,
+      roughness: 0.4,
+      emissive: 0x061018,
+      emissiveIntensity: 0.4,
     })
   );
-  mesh.frustumCulled = false;
-  mesh.renderOrder = 3;
-  mesh.userData.btnCanvas = canvas;
-  mesh.userData.btnTex = tex;
-  return mesh;
+  body.rotation.x = Math.PI / 2;
+  const rim = new THREE.Mesh(
+    new THREE.TorusGeometry(R - 0.008, 0.012, 12, 48),
+    new THREE.MeshStandardMaterial({
+      color: 0x3de0ff,
+      emissive: 0x1490b0,
+      emissiveIntensity: 0.55,
+      metalness: 0.45,
+      roughness: 0.3,
+    })
+  );
+  rim.position.z = D / 2;
+  const { tex } = makeLabelTexture(THREE, (ctx, w, h) => {
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "#3de0ff";
+    ctx.font = "700 140px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("←", w / 2, h / 2 + 8);
+  });
+  const face = new THREE.Mesh(
+    new THREE.CircleGeometry(R * 0.72, 32),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: true, toneMapped: false })
+  );
+  face.position.z = D / 2 + 0.004;
+  [body, rim, face].forEach((m) => {
+    m.frustumCulled = false;
+    m.renderOrder = 3;
+  });
+  group.add(body, rim, face);
+  group.userData.body = body;
+  group.userData.rim = rim;
+  group.userData.hitRadius = R;
+  return group;
+}
+
+function makeRecordButton3d(THREE) {
+  const group = new THREE.Group();
+  group.name = "vr-record-3d";
+  const R = 0.12;
+  const D = 0.05;
+  const body = new THREE.Mesh(
+    new THREE.CylinderGeometry(R, R, D, 48),
+    new THREE.MeshStandardMaterial({
+      color: 0x102038,
+      metalness: 0.35,
+      roughness: 0.4,
+      emissive: 0x061018,
+      emissiveIntensity: 0.4,
+    })
+  );
+  body.rotation.x = Math.PI / 2;
+  const rim = new THREE.Mesh(
+    new THREE.TorusGeometry(R - 0.008, 0.012, 12, 48),
+    new THREE.MeshStandardMaterial({
+      color: 0x3de0ff,
+      emissive: 0x1490b0,
+      emissiveIntensity: 0.55,
+      metalness: 0.45,
+      roughness: 0.3,
+    })
+  );
+  rim.position.z = D / 2;
+  const recIcon = new THREE.Mesh(
+    new THREE.SphereGeometry(0.038, 24, 16),
+    new THREE.MeshStandardMaterial({
+      color: 0xff3b5c,
+      emissive: 0xaa1028,
+      emissiveIntensity: 0.65,
+      metalness: 0.2,
+      roughness: 0.35,
+    })
+  );
+  recIcon.position.z = D / 2 + 0.02;
+  const stopIcon = new THREE.Mesh(
+    new THREE.BoxGeometry(0.055, 0.055, 0.02),
+    new THREE.MeshStandardMaterial({
+      color: 0xff3b5c,
+      emissive: 0xaa1028,
+      emissiveIntensity: 0.65,
+      metalness: 0.2,
+      roughness: 0.35,
+    })
+  );
+  stopIcon.position.z = D / 2 + 0.02;
+  stopIcon.visible = false;
+  [body, rim, recIcon, stopIcon].forEach((m) => {
+    m.frustumCulled = false;
+    m.renderOrder = 3;
+  });
+  group.add(body, rim, recIcon, stopIcon);
+  group.userData.body = body;
+  group.userData.rim = rim;
+  group.userData.recIcon = recIcon;
+  group.userData.stopIcon = stopIcon;
+  group.userData.hitRadius = R;
+  return group;
 }
 
 function paintRecordButton(mesh, recording) {
-  if (!mesh || !mesh.userData.btnCanvas) return;
-  const canvas = mesh.userData.btnCanvas;
-  const ctx = canvas.getContext("2d");
-  const size = canvas.width;
-  const cx = size / 2;
-  const cy = size / 2;
-  const r = size * 0.42;
-  const stroke = recording ? "#ff3b5c" : "#3de0ff";
-  ctx.clearRect(0, 0, size, size);
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(8,12,20,0.92)";
-  ctx.fill();
-  ctx.lineWidth = size * 0.04;
-  ctx.strokeStyle = stroke;
-  ctx.stroke();
-  if (recording) {
-    const sq = size * 0.18;
-    ctx.fillStyle = "#ff3b5c";
-    ctx.fillRect(cx - sq / 2, cy - sq / 2, sq, sq);
-  } else {
-    ctx.beginPath();
-    ctx.arc(cx, cy, size * 0.14, 0, Math.PI * 2);
-    ctx.fillStyle = "#ff3b5c";
-    ctx.fill();
+  if (!mesh || !mesh.userData) return;
+  const rim = mesh.userData.rim;
+  const rec = mesh.userData.recIcon;
+  const stop = mesh.userData.stopIcon;
+  const accent = recording ? 0xff3b5c : 0x3de0ff;
+  const glow = recording ? 0x881828 : 0x1490b0;
+  if (rim && rim.material) {
+    rim.material.color.setHex(accent);
+    rim.material.emissive.setHex(glow);
   }
-  mesh.userData.btnTex.needsUpdate = true;
+  if (rec) rec.visible = !recording;
+  if (stop) stop.visible = !!recording;
+}
+
+function makeHudBanner3d(THREE) {
+  const group = new THREE.Group();
+  group.name = "vr-hud-3d";
+  const W = 1.1;
+  const H = 0.28;
+  const D = 0.045;
+  const frame = new THREE.Mesh(
+    new THREE.BoxGeometry(W + 0.04, H + 0.04, D * 0.55),
+    new THREE.MeshStandardMaterial({
+      color: 0x3de0ff,
+      emissive: 0x0c5068,
+      emissiveIntensity: 0.4,
+      metalness: 0.5,
+      roughness: 0.35,
+    })
+  );
+  frame.position.z = -0.01;
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(W, H, D),
+    new THREE.MeshStandardMaterial({
+      color: 0x0c1424,
+      metalness: 0.3,
+      roughness: 0.45,
+      emissive: 0x050a14,
+      emissiveIntensity: 0.5,
+    })
+  );
+  const canvas = document.createElement("canvas");
+  canvas.width = 2048;
+  canvas.height = 512;
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  tex.anisotropy = 8;
+  const face = new THREE.Mesh(
+    new THREE.PlaneGeometry(W * 0.92, H * 0.78),
+    new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      depthTest: true,
+      depthWrite: false,
+      toneMapped: false,
+    })
+  );
+  face.position.z = D / 2 + 0.004;
+  [frame, body, face].forEach((m) => {
+    m.frustumCulled = false;
+    m.renderOrder = 2;
+  });
+  group.add(frame, body, face);
+  group.userData.frame = frame;
+  group.userData.body = body;
+  group.userData.face = face;
+  group.userData.canvas = canvas;
+  group.userData.tex = tex;
+  group.userData.size = { w: W, h: H };
+  return group;
 }
 
 function makeControllerPointer(THREE) {
@@ -248,7 +379,7 @@ class StereoVR {
     this._planeH = 1.24;
     this._dropY = -0.25;
     const geo = new THREE.PlaneGeometry(this._planeW, this._planeH);
-    this._roundAlpha = roundedCornerAlpha(THREE, this._planeW, this._planeH, 56);
+    this._roundAlpha = roundedCornerAlpha(THREE, this._planeW, this._planeH, 22);
     const matOpts = {
       depthTest: false,
       depthWrite: false,
@@ -285,23 +416,19 @@ class StereoVR {
     this.dualRight.frustumCulled = false;
     this.screen.add(this.dualLeft, this.dualRight);
 
-    this.hudCanvas = document.createElement("canvas");
-    this.hudCanvas.width = 1024;
-    this.hudCanvas.height = 256;
-    this.hudTex = new THREE.CanvasTexture(this.hudCanvas);
-    this.hud = new THREE.Mesh(
-      new THREE.PlaneGeometry(1.1, 0.28),
-      new THREE.MeshBasicMaterial({ map: this.hudTex, transparent: true, depthTest: false })
-    );
-    this.hud.frustumCulled = false;
-    this.hud.renderOrder = 2;
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+    const key = new THREE.DirectionalLight(0xffffff, 0.95);
+    key.position.set(0.3, 0.9, 1.4);
+    this.scene.add(key);
+
+    this.hud = makeHudBanner3d(THREE);
+    this.hudCanvas = this.hud.userData.canvas;
+    this.hudTex = this.hud.userData.tex;
     this.screen.add(this.hud);
 
-    this.backMesh = makeCircleButton(THREE, "←", "rgba(8,12,20,0.92)", "#3de0ff");
-    this.backMesh.name = "vr-back-3d";
+    this.backMesh = makeBackButton3d(THREE);
     this.screen.add(this.backMesh);
-    this.recordMesh = makeCircleButton(THREE, "●", "rgba(8,12,20,0.92)", "#3de0ff");
-    this.recordMesh.name = "vr-record-3d";
+    this.recordMesh = makeRecordButton3d(THREE);
     paintRecordButton(this.recordMesh, this.recording);
     this.screen.add(this.recordMesh);
     this._raycaster = new THREE.Raycaster();
@@ -426,12 +553,12 @@ class StereoVR {
     this.dualRight.position.set(w / 2 + 0.25, 0, -0.05);
     const hudW = 1.1;
     const hudY = -(h / 2 + 0.22);
-    this.hud.position.set(0, hudY, 0.04);
-    const btnR = 0.14;
+    this.hud.position.set(0, hudY, 0.05);
+    const btnR = 0.12;
     const btnGap = 0.08;
     const btnX = hudW / 2 + btnR + btnGap;
-    if (this.backMesh) this.backMesh.position.set(-btnX, hudY, 0.06);
-    if (this.recordMesh) this.recordMesh.position.set(btnX, hudY, 0.06);
+    if (this.backMesh) this.backMesh.position.set(-btnX, hudY, 0.07);
+    if (this.recordMesh) this.recordMesh.position.set(btnX, hudY, 0.07);
     if (this._zoomLabel) this._zoomLabel.textContent = `${Math.round(s * 100)}%`;
     this._paintHud();
   }
@@ -503,6 +630,15 @@ class StereoVR {
     return (this._uiTargets || []).filter(Boolean);
   }
 
+  _uiHitName(obj) {
+    let cur = obj;
+    while (cur) {
+      if (cur.name === "vr-back-3d" || cur.name === "vr-record-3d") return cur.name;
+      cur = cur.parent;
+    }
+    return "";
+  }
+
   _updatePointers() {
     if (!this._controllers) return;
     const fallback = 1.5;
@@ -524,11 +660,11 @@ class StereoVR {
           this._forward.set(0, 0, -1).applyQuaternion(ctrl.quaternion);
           this._raycaster.set(this._tmp, this._forward);
         }
-        const hits = targets.length ? this._raycaster.intersectObjects(targets, false) : [];
+        const hits = targets.length ? this._raycaster.intersectObjects(targets, true) : [];
         if (hits.length) {
           dist = hits[0].distance;
           hit = true;
-          const name = hits[0].object.name;
+          const name = this._uiHitName(hits[0].object);
           if (name === "vr-back-3d") hoverBack = true;
           if (name === "vr-record-3d") hoverRec = true;
         }
@@ -542,8 +678,8 @@ class StereoVR {
       beam.material.color.setHex(hit ? 0xff3b5c : 0x88f0ff);
       dot.material.color.setHex(hit ? 0xff3b5c : 0x3de0ff);
     }
-    if (this.backMesh) this.backMesh.scale.setScalar(hoverBack ? 1.15 : 1);
-    if (this.recordMesh) this.recordMesh.scale.setScalar(hoverRec ? 1.15 : 1);
+    if (this.backMesh) this.backMesh.scale.setScalar(hoverBack ? 1.12 : 1);
+    if (this.recordMesh) this.recordMesh.scale.setScalar(hoverRec ? 1.12 : 1);
   }
 
   _onSelect(ctrl) {
@@ -557,9 +693,9 @@ class StereoVR {
         this._forward.set(0, 0, -1).applyQuaternion(ctrl.quaternion);
         this._raycaster.set(this._tmp, this._forward);
       }
-      const hits = this._raycaster.intersectObjects(targets, false);
+      const hits = this._raycaster.intersectObjects(targets, true);
       if (!hits.length) return;
-      const name = hits[0].object.name;
+      const name = this._uiHitName(hits[0].object);
       if (name === "vr-back-3d") {
         this.exit();
         return;
@@ -789,22 +925,45 @@ class StereoVR {
   }
 
   _paintHud() {
-    if (!this.hudCanvas) return;
-    const ctx = this.hudCanvas.getContext("2d");
-    ctx.clearRect(0, 0, 1024, 256);
-    ctx.fillStyle = "rgba(8,12,20,0.72)";
-    if (typeof ctx.roundRect === "function") {
-      ctx.roundRect(20, 20, 984, 216, 24);
-      ctx.fill();
-    } else {
-      ctx.fillRect(20, 20, 984, 216);
+    const canvas = this.hudCanvas || (this.hud && this.hud.userData && this.hud.userData.canvas);
+    const tex = this.hudTex || (this.hud && this.hud.userData && this.hud.userData.tex);
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const recording = !!this.recording;
+    const accent = recording ? "#ff3b5c" : "#3de0ff";
+    const title = recording ? "RECORDING" : "READY";
+    const hint = recording ? "Aim Record to stop" : "Aim Record to start  ·  Back to exit";
+    const zoom = `Zoom ${Math.round((this.zoom || 1) * 100)}%`;
+
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = accent;
+    ctx.font = '800 120px "Segoe UI", "Helvetica Neue", sans-serif';
+    ctx.fillText(title, 72, h * 0.34);
+
+    ctx.fillStyle = "#e8eefc";
+    ctx.font = '650 64px "Segoe UI", "Helvetica Neue", sans-serif';
+    ctx.fillText(hint, 72, h * 0.62);
+
+    ctx.fillStyle = "#9eb0d0";
+    ctx.font = '600 56px "Segoe UI", "Helvetica Neue", sans-serif';
+    ctx.fillText(`${zoom}  ·  stick / drag`, 72, h * 0.82);
+
+    // status pip
+    ctx.beginPath();
+    ctx.arc(w - 90, h * 0.34, 28, 0, Math.PI * 2);
+    ctx.fillStyle = accent;
+    ctx.fill();
+
+    if (tex) tex.needsUpdate = true;
+    const frame = this.hud && this.hud.userData && this.hud.userData.frame;
+    if (frame && frame.material) {
+      frame.material.color.setHex(recording ? 0xff3b5c : 0x3de0ff);
+      frame.material.emissive.setHex(recording ? 0x5a1020 : 0x0c5068);
     }
-    ctx.fillStyle = this.recording ? "#ff3b5c" : "#3de0ff";
-    ctx.font = "700 42px sans-serif";
-    ctx.fillText(this.recording ? "RECORDING  ·  aim ● to stop" : "Aim ● to record  ·  ← to exit", 48, 110);
-    ctx.fillStyle = "#c5d0e8";
-    ctx.font = "600 40px sans-serif";
-    ctx.fillText(`Zoom ${Math.round((this.zoom || 1) * 100)}%  ·  stick / drag / arrows`, 56, 180);
-    if (this.hudTex) this.hudTex.needsUpdate = true;
   }
 }
