@@ -66,175 +66,96 @@ function copyCanvas(dst, src) {
   return true;
 }
 
-function makeLabelTexture(THREE, drawFn, size) {
+function isHandInput(src) {
+  if (!src) return false;
+  if (src.hand) return true;
+  const profiles = src.profiles || [];
+  for (let i = 0; i < profiles.length; i++) {
+    if (/hand/i.test(profiles[i])) return true;
+  }
+  return false;
+}
+
+function isControllerInput(src) {
+  return !!src && !isHandInput(src);
+}
+
+function makeFlatCircleButton(THREE, kind) {
+  const size = 256;
   const canvas = document.createElement("canvas");
-  canvas.width = size || 256;
-  canvas.height = size || 256;
-  const ctx = canvas.getContext("2d");
-  drawFn(ctx, canvas.width, canvas.height);
+  canvas.width = size;
+  canvas.height = size;
   const tex = new THREE.CanvasTexture(canvas);
   tex.minFilter = THREE.LinearFilter;
   tex.generateMipmaps = false;
-  tex.needsUpdate = true;
-  return { canvas, tex };
-}
-
-function makeBackButton3d(THREE) {
-  const group = new THREE.Group();
-  group.name = "vr-back-3d";
-  const R = 0.12;
-  const D = 0.05;
-  const body = new THREE.Mesh(
-    new THREE.CylinderGeometry(R, R, D, 48),
-    new THREE.MeshStandardMaterial({
-      color: 0x102038,
-      metalness: 0.35,
-      roughness: 0.4,
-      emissive: 0x061018,
-      emissiveIntensity: 0.4,
+  const mesh = new THREE.Mesh(
+    new THREE.CircleGeometry(0.12, 48),
+    new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      depthTest: false,
+      toneMapped: false,
+      side: THREE.DoubleSide,
     })
   );
-  body.rotation.x = Math.PI / 2;
-  const rim = new THREE.Mesh(
-    new THREE.TorusGeometry(R - 0.008, 0.012, 12, 48),
-    new THREE.MeshStandardMaterial({
-      color: 0x3de0ff,
-      emissive: 0x1490b0,
-      emissiveIntensity: 0.55,
-      metalness: 0.45,
-      roughness: 0.3,
-    })
-  );
-  rim.position.z = D / 2;
-  const { tex } = makeLabelTexture(THREE, (ctx, w, h) => {
-    ctx.clearRect(0, 0, w, h);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 3;
+  mesh.name = kind === "record" ? "vr-record-3d" : "vr-back-3d";
+  mesh.userData.btnCanvas = canvas;
+  mesh.userData.btnTex = tex;
+  mesh.userData.kind = kind;
+  if (kind === "back") {
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, size, size);
+    ctx.beginPath();
+    ctx.arc(128, 128, 108, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(8,12,20,0.92)";
+    ctx.fill();
+    ctx.lineWidth = 10;
+    ctx.strokeStyle = "#3de0ff";
+    ctx.stroke();
     ctx.fillStyle = "#3de0ff";
-    ctx.font = "700 140px sans-serif";
+    ctx.font = "700 120px sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("←", w / 2, h / 2 + 8);
-  });
-  const face = new THREE.Mesh(
-    new THREE.CircleGeometry(R * 0.72, 32),
-    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: true, toneMapped: false })
-  );
-  face.position.z = D / 2 + 0.004;
-  [body, rim, face].forEach((m) => {
-    m.frustumCulled = false;
-    m.renderOrder = 3;
-  });
-  group.add(body, rim, face);
-  group.userData.body = body;
-  group.userData.rim = rim;
-  group.userData.hitRadius = R;
-  return group;
-}
-
-function makeRecordButton3d(THREE) {
-  const group = new THREE.Group();
-  group.name = "vr-record-3d";
-  const R = 0.12;
-  const D = 0.05;
-  const body = new THREE.Mesh(
-    new THREE.CylinderGeometry(R, R, D, 48),
-    new THREE.MeshStandardMaterial({
-      color: 0x102038,
-      metalness: 0.35,
-      roughness: 0.4,
-      emissive: 0x061018,
-      emissiveIntensity: 0.4,
-    })
-  );
-  body.rotation.x = Math.PI / 2;
-  const rim = new THREE.Mesh(
-    new THREE.TorusGeometry(R - 0.008, 0.012, 12, 48),
-    new THREE.MeshStandardMaterial({
-      color: 0x3de0ff,
-      emissive: 0x1490b0,
-      emissiveIntensity: 0.55,
-      metalness: 0.45,
-      roughness: 0.3,
-    })
-  );
-  rim.position.z = D / 2;
-  const recIcon = new THREE.Mesh(
-    new THREE.SphereGeometry(0.038, 24, 16),
-    new THREE.MeshStandardMaterial({
-      color: 0xff3b5c,
-      emissive: 0xaa1028,
-      emissiveIntensity: 0.65,
-      metalness: 0.2,
-      roughness: 0.35,
-    })
-  );
-  recIcon.position.z = D / 2 + 0.02;
-  const stopIcon = new THREE.Mesh(
-    new THREE.BoxGeometry(0.055, 0.055, 0.02),
-    new THREE.MeshStandardMaterial({
-      color: 0xff3b5c,
-      emissive: 0xaa1028,
-      emissiveIntensity: 0.65,
-      metalness: 0.2,
-      roughness: 0.35,
-    })
-  );
-  stopIcon.position.z = D / 2 + 0.02;
-  stopIcon.visible = false;
-  [body, rim, recIcon, stopIcon].forEach((m) => {
-    m.frustumCulled = false;
-    m.renderOrder = 3;
-  });
-  group.add(body, rim, recIcon, stopIcon);
-  group.userData.body = body;
-  group.userData.rim = rim;
-  group.userData.recIcon = recIcon;
-  group.userData.stopIcon = stopIcon;
-  group.userData.hitRadius = R;
-  return group;
+    ctx.fillText("←", 128, 136);
+    tex.needsUpdate = true;
+  } else {
+    paintRecordButton(mesh, false);
+  }
+  return mesh;
 }
 
 function paintRecordButton(mesh, recording) {
-  if (!mesh || !mesh.userData) return;
-  const rim = mesh.userData.rim;
-  const rec = mesh.userData.recIcon;
-  const stop = mesh.userData.stopIcon;
-  const accent = recording ? 0xff3b5c : 0x3de0ff;
-  const glow = recording ? 0x881828 : 0x1490b0;
-  if (rim && rim.material) {
-    rim.material.color.setHex(accent);
-    rim.material.emissive.setHex(glow);
+  if (!mesh || !mesh.userData || !mesh.userData.btnCanvas) return;
+  const canvas = mesh.userData.btnCanvas;
+  const ctx = canvas.getContext("2d");
+  const size = canvas.width;
+  const cx = size / 2;
+  const cy = size / 2;
+  const stroke = recording ? "#ff3b5c" : "#3de0ff";
+  ctx.clearRect(0, 0, size, size);
+  ctx.beginPath();
+  ctx.arc(cx, cy, size * 0.42, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(8,12,20,0.92)";
+  ctx.fill();
+  ctx.lineWidth = size * 0.04;
+  ctx.strokeStyle = stroke;
+  ctx.stroke();
+  if (recording) {
+    const sq = size * 0.18;
+    ctx.fillStyle = "#ff3b5c";
+    ctx.fillRect(cx - sq / 2, cy - sq / 2, sq, sq);
+  } else {
+    ctx.beginPath();
+    ctx.arc(cx, cy, size * 0.14, 0, Math.PI * 2);
+    ctx.fillStyle = "#ff3b5c";
+    ctx.fill();
   }
-  if (rec) rec.visible = !recording;
-  if (stop) stop.visible = !!recording;
+  mesh.userData.btnTex.needsUpdate = true;
 }
 
-function makeHudBanner3d(THREE) {
-  const group = new THREE.Group();
-  group.name = "vr-hud-3d";
-  const W = 1.1;
-  const H = 0.28;
-  const D = 0.045;
-  const frame = new THREE.Mesh(
-    new THREE.BoxGeometry(W + 0.04, H + 0.04, D * 0.55),
-    new THREE.MeshStandardMaterial({
-      color: 0x3de0ff,
-      emissive: 0x0c5068,
-      emissiveIntensity: 0.4,
-      metalness: 0.5,
-      roughness: 0.35,
-    })
-  );
-  frame.position.z = -0.01;
-  const body = new THREE.Mesh(
-    new THREE.BoxGeometry(W, H, D),
-    new THREE.MeshStandardMaterial({
-      color: 0x0c1424,
-      metalness: 0.3,
-      roughness: 0.45,
-      emissive: 0x050a14,
-      emissiveIntensity: 0.5,
-    })
-  );
+function makeFlatHud(THREE) {
   const canvas = document.createElement("canvas");
   canvas.width = 2048;
   canvas.height = 512;
@@ -242,30 +163,21 @@ function makeHudBanner3d(THREE) {
   tex.minFilter = THREE.LinearFilter;
   tex.magFilter = THREE.LinearFilter;
   tex.generateMipmaps = false;
-  tex.anisotropy = 8;
-  const face = new THREE.Mesh(
-    new THREE.PlaneGeometry(W * 0.92, H * 0.78),
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.1, 0.28),
     new THREE.MeshBasicMaterial({
       map: tex,
       transparent: true,
-      depthTest: true,
-      depthWrite: false,
+      depthTest: false,
       toneMapped: false,
     })
   );
-  face.position.z = D / 2 + 0.004;
-  [frame, body, face].forEach((m) => {
-    m.frustumCulled = false;
-    m.renderOrder = 2;
-  });
-  group.add(frame, body, face);
-  group.userData.frame = frame;
-  group.userData.body = body;
-  group.userData.face = face;
-  group.userData.canvas = canvas;
-  group.userData.tex = tex;
-  group.userData.size = { w: W, h: H };
-  return group;
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 2;
+  mesh.name = "vr-hud";
+  mesh.userData.canvas = canvas;
+  mesh.userData.tex = tex;
+  return mesh;
 }
 
 function makeControllerPointer(THREE) {
@@ -416,19 +328,14 @@ class StereoVR {
     this.dualRight.frustumCulled = false;
     this.screen.add(this.dualLeft, this.dualRight);
 
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-    const key = new THREE.DirectionalLight(0xffffff, 0.95);
-    key.position.set(0.3, 0.9, 1.4);
-    this.scene.add(key);
-
-    this.hud = makeHudBanner3d(THREE);
+    this.hud = makeFlatHud(THREE);
     this.hudCanvas = this.hud.userData.canvas;
     this.hudTex = this.hud.userData.tex;
     this.screen.add(this.hud);
 
-    this.backMesh = makeBackButton3d(THREE);
+    this.backMesh = makeFlatCircleButton(THREE, "back");
     this.screen.add(this.backMesh);
-    this.recordMesh = makeRecordButton3d(THREE);
+    this.recordMesh = makeFlatCircleButton(THREE, "record");
     paintRecordButton(this.recordMesh, this.recording);
     this.screen.add(this.recordMesh);
     this._raycaster = new THREE.Raycaster();
@@ -451,11 +358,36 @@ class StereoVR {
     for (let i = 0; i < 2; i++) {
       const ctrl = this.renderer.xr.getController(i);
       const pointer = makeControllerPointer(THREE);
+      pointer.visible = false;
       ctrl.add(pointer);
       ctrl.userData.pointer = pointer;
-      ctrl.addEventListener("squeezestart", () => this._beginGrab(ctrl));
-      ctrl.addEventListener("squeezeend", () => this._endGrab(ctrl));
-      ctrl.addEventListener("select", () => this._onSelect(ctrl));
+      ctrl.userData.isHand = false;
+      ctrl.addEventListener("connected", (event) => {
+        const src = event.data;
+        ctrl.userData.inputSource = src;
+        ctrl.userData.isHand = isHandInput(src);
+        ctrl.visible = !ctrl.userData.isHand;
+        if (pointer) pointer.visible = !ctrl.userData.isHand;
+      });
+      ctrl.addEventListener("disconnected", () => {
+        ctrl.userData.inputSource = null;
+        ctrl.userData.isHand = false;
+        ctrl.visible = false;
+        if (pointer) pointer.visible = false;
+      });
+      ctrl.addEventListener("squeezestart", () => {
+        if (ctrl.userData.isHand) return;
+        this._beginGrab(ctrl);
+      });
+      ctrl.addEventListener("squeezeend", () => {
+        if (ctrl.userData.isHand) return;
+        this._endGrab(ctrl);
+      });
+      ctrl.addEventListener("select", () => {
+        if (ctrl.userData.isHand) return;
+        this._onSelect(ctrl);
+      });
+      ctrl.visible = false;
       this.scene.add(ctrl);
       this._controllers.push(ctrl);
     }
@@ -630,13 +562,12 @@ class StereoVR {
     return (this._uiTargets || []).filter(Boolean);
   }
 
-  _uiHitName(obj) {
-    let cur = obj;
-    while (cur) {
-      if (cur.name === "vr-back-3d" || cur.name === "vr-record-3d") return cur.name;
-      cur = cur.parent;
-    }
-    return "";
+  _isController(ctrl) {
+    if (!ctrl || ctrl.userData.isHand) return false;
+    const src = ctrl.userData.inputSource;
+    if (src) return isControllerInput(src);
+    // Not connected yet (or emulator) — allow until we know it is a hand.
+    return ctrl.userData.isHand !== true;
   }
 
   _updatePointers() {
@@ -649,6 +580,11 @@ class StereoVR {
       const ctrl = this._controllers[i];
       const ptr = ctrl.userData.pointer;
       if (!ptr) continue;
+      if (!this._isController(ctrl)) {
+        ptr.visible = false;
+        continue;
+      }
+      ptr.visible = true;
       const beam = ptr.userData.beam;
       const dot = ptr.userData.dot;
       let dist = fallback;
@@ -660,11 +596,11 @@ class StereoVR {
           this._forward.set(0, 0, -1).applyQuaternion(ctrl.quaternion);
           this._raycaster.set(this._tmp, this._forward);
         }
-        const hits = targets.length ? this._raycaster.intersectObjects(targets, true) : [];
+        const hits = targets.length ? this._raycaster.intersectObjects(targets, false) : [];
         if (hits.length) {
           dist = hits[0].distance;
           hit = true;
-          const name = this._uiHitName(hits[0].object);
+          const name = hits[0].object.name;
           if (name === "vr-back-3d") hoverBack = true;
           if (name === "vr-record-3d") hoverRec = true;
         }
@@ -684,6 +620,7 @@ class StereoVR {
 
   _onSelect(ctrl) {
     if (this._grabbing) return;
+    if (!this._isController(ctrl)) return;
     const targets = this._uiMeshes();
     if (!targets.length || !this._raycaster) return;
     try {
@@ -693,9 +630,9 @@ class StereoVR {
         this._forward.set(0, 0, -1).applyQuaternion(ctrl.quaternion);
         this._raycaster.set(this._tmp, this._forward);
       }
-      const hits = this._raycaster.intersectObjects(targets, true);
+      const hits = this._raycaster.intersectObjects(targets, false);
       if (!hits.length) return;
-      const name = this._uiHitName(hits[0].object);
+      const name = hits[0].object.name;
       if (name === "vr-back-3d") {
         this.exit();
         return;
@@ -709,7 +646,7 @@ class StereoVR {
   }
 
   _beginGrab(ctrl) {
-    if (!this.screen || !ctrl) return;
+    if (!this.screen || !this._isController(ctrl)) return;
     this._grabbing = true;
     this._grabCtrl = ctrl;
     const head = this._headSpace();
@@ -903,6 +840,7 @@ class StereoVR {
     let axisY = 0;
     const sources = xrFrame.session.inputSources || [];
     for (let i = 0; i < sources.length; i++) {
+      if (!isControllerInput(sources[i])) continue;
       const pad = sources[i].gamepad;
       if (!pad || !pad.axes || !pad.axes.length) continue;
       const y3 = pad.axes.length > 3 ? pad.axes[3] : 0;
@@ -935,6 +873,18 @@ class StereoVR {
 
     const recording = !!this.recording;
     const accent = recording ? "#ff3b5c" : "#3de0ff";
+    ctx.fillStyle = "rgba(8,12,20,0.92)";
+    if (typeof ctx.roundRect === "function") {
+      ctx.beginPath();
+      ctx.roundRect(24, 24, w - 48, h - 48, 48);
+      ctx.fill();
+      ctx.lineWidth = 10;
+      ctx.strokeStyle = accent;
+      ctx.stroke();
+    } else {
+      ctx.fillRect(24, 24, w - 48, h - 48);
+    }
+
     const title = recording ? "RECORDING" : "READY";
     const hint = recording ? "Aim Record to stop" : "Aim Record to start  ·  Back to exit";
     const zoom = `Zoom ${Math.round((this.zoom || 1) * 100)}%`;
@@ -943,27 +893,21 @@ class StereoVR {
     ctx.textBaseline = "middle";
     ctx.fillStyle = accent;
     ctx.font = '800 120px "Segoe UI", "Helvetica Neue", sans-serif';
-    ctx.fillText(title, 72, h * 0.34);
+    ctx.fillText(title, 96, h * 0.34);
 
     ctx.fillStyle = "#e8eefc";
     ctx.font = '650 64px "Segoe UI", "Helvetica Neue", sans-serif';
-    ctx.fillText(hint, 72, h * 0.62);
+    ctx.fillText(hint, 96, h * 0.62);
 
     ctx.fillStyle = "#9eb0d0";
     ctx.font = '600 56px "Segoe UI", "Helvetica Neue", sans-serif';
-    ctx.fillText(`${zoom}  ·  stick / drag`, 72, h * 0.82);
+    ctx.fillText(`${zoom}  ·  stick / drag`, 96, h * 0.82);
 
-    // status pip
     ctx.beginPath();
-    ctx.arc(w - 90, h * 0.34, 28, 0, Math.PI * 2);
+    ctx.arc(w - 120, h * 0.34, 28, 0, Math.PI * 2);
     ctx.fillStyle = accent;
     ctx.fill();
 
     if (tex) tex.needsUpdate = true;
-    const frame = this.hud && this.hud.userData && this.hud.userData.frame;
-    if (frame && frame.material) {
-      frame.material.color.setHex(recording ? 0xff3b5c : 0x3de0ff);
-      frame.material.emissive.setHex(recording ? 0x5a1020 : 0x0c5068);
-    }
   }
 }
