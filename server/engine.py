@@ -230,7 +230,12 @@ class StereoEngine:
             self.stats["skew_ms"] = round(paired.skew_ms, 2)
             self.stats["synthetic"] = paired.left.synthetic or paired.right.synthetic
 
-            # Publish live preview before disk work so VR stays responsive.
+            # Queue disk frames first so recording is not starved by JPEG encode.
+            if self.recorder.recording:
+                self.recorder.maybe_rotate(width, height)
+                ts = (paired.left.timestamp + paired.right.timestamp) * 0.5
+                self.recorder.write(paired.left.image, paired.right.image, timestamp=ts)
+
             left_jpeg = encode_jpeg(paired.left.image, quality, max_width)
             right_jpeg = encode_jpeg(paired.right.image, quality, max_width)
             packet = pack_pair(left_jpeg, right_jpeg, paired.left, paired.right, paired.skew_ms)
@@ -238,11 +243,6 @@ class StereoEngine:
                 self._preview = packet
                 self._left_jpeg = left_jpeg
                 self._right_jpeg = right_jpeg
-
-            if self.recorder.recording:
-                self.recorder.maybe_rotate(width, height)
-                ts = (paired.left.timestamp + paired.right.timestamp) * 0.5
-                self.recorder.write(paired.left.image, paired.right.image, timestamp=ts)
 
             # Side-by-side MJPEG is heavier — refresh every other frame.
             if self._fps_count % 2 == 0:

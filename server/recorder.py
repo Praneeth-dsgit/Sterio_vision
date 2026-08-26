@@ -65,9 +65,10 @@ class StereoRecorder:
         self._ffmpeg = find_ffmpeg()
         self._fallback_writer: Optional[cv2.VideoWriter] = None
         self.error: Optional[str] = None
-        self._q: queue.Queue = queue.Queue(maxsize=2)
+        self._q: queue.Queue = queue.Queue(maxsize=60)
         self._worker: Optional[threading.Thread] = None
         self._worker_stop = threading.Event()
+        self.dropped = 0
 
     @property
     def recording(self) -> bool:
@@ -128,6 +129,7 @@ class StereoRecorder:
         self._started_at = time.time()
         self._pace_origin = 0.0
         self._frames = 0
+        self.dropped = 0
         self.error = None
         self._worker_stop.clear()
         self._drain_queue()
@@ -143,7 +145,7 @@ class StereoRecorder:
         return self.start(width, height)
 
     def write(self, left: np.ndarray, right: np.ndarray, timestamp: Optional[float] = None) -> None:
-        """Enqueue a frame copy; does not block the preview loop on ffmpeg."""
+        """Enqueue a frame copy for the writer thread."""
         if not self.recording:
             return
         now = timestamp if timestamp is not None else time.time()
@@ -151,6 +153,8 @@ class StereoRecorder:
         try:
             self._q.put_nowait(item)
         except queue.Full:
+            # Drop oldest only when the writer is badly behind (~2s buffer).
+            self.dropped += 1
             try:
                 self._q.get_nowait()
             except queue.Empty:
@@ -158,7 +162,7 @@ class StereoRecorder:
             try:
                 self._q.put_nowait(item)
             except queue.Full:
-                pass
+                self.dropped += 1
 
     def _worker_loop(self) -> None:
         while not self._worker_stop.is_set():
@@ -240,6 +244,8 @@ class StereoRecorder:
             "recording": self.recording,
             "file": self.current_file,
             "frames": self._frames,
+            "dropped": self.dropped,
+            "queue": self._q.qsize(),
             "ffmpeg": bool(self._ffmpeg),
             "error": self.error,
             "elapsed_sec": round(time.time() - self._started_at, 1) if self.recording else 0,
