@@ -171,34 +171,6 @@ def test_pattern(width: int, height: int, label: str, hue: int, t: float) -> np.
     return frame
 
 
-def open_capture(index: int, width: int, height: int, fps: int, fourcc: str) -> cv2.VideoCapture:
-    if platform.system() == "Windows":
-        backends = (cv2.CAP_DSHOW, cv2.CAP_MSMF)
-    else:
-        backends = (cv2.CAP_V4L2, cv2.CAP_ANY)
-
-    for backend in backends:
-        cap = cv2.VideoCapture(index, backend)
-        if not cap.isOpened():
-            continue
-        cap.set(cv2.CAP_PROP_FOURCC, _fourcc_int(fourcc))
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        cap.set(cv2.CAP_PROP_FPS, fps)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        ok, frame = cap.read()
-        if ok and frame is not None:
-            return cap
-        cap.release()
-    return cv2.VideoCapture()
-
-
-def list_cameras(max_index: int = 5) -> list:
-    # Do not open devices here on Windows — MSMF/DSHOW probes steal the camera
-    # and then live capture fails with "can't grab frame".
-    return [{"index": i, "name": f"Camera {i}"} for i in range(max_index)]
-
-
 @dataclass
 class Frame:
     image: np.ndarray

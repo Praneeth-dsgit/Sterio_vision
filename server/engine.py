@@ -51,6 +51,7 @@ class StereoEngine:
             fps=int(self.cfg["cameras"]["fps"]),
             layout=self.cfg["record"]["stereo_layout"],
             segment_minutes=int(self.cfg["record"]["segment_minutes"]),
+            scale=float(self.cfg["record"].get("scale", 1.0)),
         )
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -109,6 +110,7 @@ class StereoEngine:
             fps=int(cam["fps"]),
             layout=self.cfg["record"]["stereo_layout"],
             segment_minutes=int(self.cfg["record"]["segment_minutes"]),
+            scale=float(self.cfg["record"].get("scale", 1.0)),
         )
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="stereo-engine", daemon=True)
@@ -155,6 +157,7 @@ class StereoEngine:
         self.cfg = cfg
         self.recorder.segment_minutes = int(cfg["record"]["segment_minutes"])
         self.recorder.layout = cfg["record"]["stereo_layout"]
+        self.recorder.scale = float(cfg["record"].get("scale", 1.0))
         if restart:
             self.start()
         elif cfg["record"]["auto_start"] and not self.recorder.recording:
@@ -230,26 +233,35 @@ class StereoEngine:
             self.stats["skew_ms"] = round(paired.skew_ms, 2)
             self.stats["synthetic"] = paired.left.synthetic or paired.right.synthetic
 
-            # Queue disk frames first so recording is not starved by JPEG encode.
-            if self.recorder.recording:
+            recording = self.recorder.recording
+            if recording:
                 self.recorder.maybe_rotate(width, height)
-                ts = (paired.left.timestamp + paired.right.timestamp) * 0.5
-                self.recorder.write(paired.left.image, paired.right.image, timestamp=ts)
+                self.recorder.write(paired.left.image, paired.right.image)
 
-            left_jpeg = encode_jpeg(paired.left.image, quality, max_width)
-            right_jpeg = encode_jpeg(paired.right.image, quality, max_width)
-            packet = pack_pair(left_jpeg, right_jpeg, paired.left, paired.right, paired.skew_ms)
-            with self._preview_lock:
-                self._preview = packet
-                self._left_jpeg = left_jpeg
-                self._right_jpeg = right_jpeg
+            # While recording, skip/lighten JPEG so H.264 encode does not drop frames.
+            clients = int(self.stats.get("clients") or 0)
+            if recording:
+                do_preview = clients > 0 and (self._fps_count % 4 == 0)
+                preview_quality = 40
+                preview_width = min(max_width, 640) if max_width else 640
+            else:
+                do_preview = True
+                preview_quality = quality
+                preview_width = max_width
+            if do_preview:
+                left_jpeg = encode_jpeg(paired.left.image, preview_quality, preview_width)
+                right_jpeg = encode_jpeg(paired.right.image, preview_quality, preview_width)
+                packet = pack_pair(left_jpeg, right_jpeg, paired.left, paired.right, paired.skew_ms)
+                with self._preview_lock:
+                    self._preview = packet
+                    self._left_jpeg = left_jpeg
+                    self._right_jpeg = right_jpeg
 
-            # Side-by-side MJPEG is heavier — refresh every other frame.
-            if self._fps_count % 2 == 0:
+            if (not recording) and self._fps_count % 2 == 0:
                 stereo = stack_stereo(
                     paired.left.image, paired.right.image, self.cfg["record"]["stereo_layout"]
                 )
-                stereo_jpeg = encode_jpeg(stereo, quality, max_width * 2)
+                stereo_jpeg = encode_jpeg(stereo, quality, max_width * 2 if max_width else 0)
                 with self._preview_lock:
                     self._mjpeg_stereo = stereo_jpeg
 
@@ -266,6 +278,8 @@ class StereoEngine:
                 self._fps_count = 0
                 self._fps_t = now
 
-            leftover = period - (time.time() - t0)
-            if leftover > 0:
-                time.sleep(leftover)
+            # Don't pace-sleep while recording — push frames to disk as they arrive.
+            if not recording:
+                leftover = period - (time.time() - t0)
+                if leftover > 0:
+                    time.sleep(leftover)

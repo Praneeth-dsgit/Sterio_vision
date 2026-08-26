@@ -38,3 +38,5 @@ record:
   segment_minutes: 5
   # Crash-safe fragmented MP4 of the side-by-side stereo pair
   stereo_layout: sbs   # sbs | tb
+  # Encode scale (1.0 = full 1280x720/eye). 0.75 keeps motion smooth on Jetson CPU.
+  scale: 0.75

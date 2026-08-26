@@ -38,6 +38,8 @@ DEFAULTS: dict[str, Any] = {
         "directory": "recordings",
         "segment_minutes": 5,
         "stereo_layout": "sbs",
+        # 1.0 = full capture size; 0.75 cuts encode load a lot on Jetson with little visible loss
+        "scale": 0.75,
     },
 }
 
