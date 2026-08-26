@@ -80,10 +80,26 @@ function renderStatus(data) {
   btn.classList.toggle("live", !!rec.recording);
   vr.setRecording(!!rec.recording);
 
+  const filePath = rec.file || "";
+  activeRecordingName = rec.recording && filePath ? filePath.split(/[/\\]/).pop() : null;
+  if (rec.error) {
+    document.getElementById("overlay-msg").style.display = "";
+    document.getElementById("overlay-msg").textContent = `Record error: ${rec.error}`;
+  }
+
   if (data.synthetic) {
     document.getElementById("overlay-msg").textContent = "Test pattern — plug in USB cameras on the Jetson";
   }
 }
+
+function formatSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1048576).toFixed(1)} MB`;
+}
+
+let activeRecordingName = null;
 
 async function refreshRecordings() {
   const data = await api("/api/recordings");
@@ -99,17 +115,20 @@ async function refreshRecordings() {
   }
   list.innerHTML = data.files
     .map((f) => {
-      const mb = (f.size / 1048576).toFixed(1);
       const safeName = String(f.name)
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/"/g, "&quot;");
+      const isActive = activeRecordingName && f.name === activeRecordingName;
+      const sizeLabel = isActive
+        ? (f.size > 0 ? `${formatSize(f.size)} · recording…` : "recording…")
+        : formatSize(f.size);
       return `<li>
         <div class="rec-meta">
           <a href="/recordings/${encodeURIComponent(f.name)}">${safeName}</a>
-          <span class="rec-size">${mb} MB</span>
+          <span class="rec-size">${sizeLabel}</span>
         </div>
-        <button type="button" class="btn-delete" data-name="${safeName}">Delete</button>
+        <button type="button" class="btn-delete" data-name="${safeName}" ${isActive ? "disabled" : ""}>Delete</button>
       </li>`;
     })
     .join("");
@@ -172,5 +191,11 @@ document.addEventListener("click", (event) => {
 stream.connect();
 api("/api/status").then(renderStatus).catch(console.error);
 refreshRecordings();
-setInterval(() => api("/api/status").then(renderStatus).catch(() => {}), 2000);
+setInterval(async () => {
+  try {
+    const data = await api("/api/status");
+    renderStatus(data);
+    if (data.record?.recording) await refreshRecordings();
+  } catch (_) {}
+}, 2000);
 setInterval(() => refreshRecordings().catch(() => {}), 8000);
